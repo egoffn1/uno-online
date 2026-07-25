@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>UNO Online</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <div id="lobby-view" class="view active">
+    <div class="logo">UNO</div>
+    <div class="subtitle">Online</div>
+    <div class="lobby-form">
+      <input type="text" id="name-input" placeholder="Твоё имя" maxlength="20">
+      <div class="lobby-buttons">
+        <button id="create-btn" class="btn btn-primary">Создать комнату</button>
+        <div class="divider">или</div>
+        <div class="join-row">
+          <input type="text" id="room-input" placeholder="Код комнаты" maxlength="6">
+          <button id="join-btn" class="btn btn-secondary">Войти</button>
+        </div>
+      </div>
+      <div id="error-msg" class="error hidden"></div>
+    </div>
+  </div>
+
+  <div id="waiting-view" class="view">
+    <div class="waiting-header">
+      <div class="room-info">
+        <span class="label">Комната:</span>
+        <span id="room-code" class="room-code"></span>
+        <button id="copy-btn" class="btn-small" title="Копировать код">📋</button>
+      </div>
+      <button id="leave-btn" class="btn btn-danger btn-small">Выйти</button>
+    </div>
+    <div class="players-list" id="waiting-players"></div>
+    <div class="waiting-actions">
+      <div id="players-count" class="players-count">0 игроков</div>
+      <button id="start-btn" class="btn btn-primary hidden">Начать игру</button>
+    </div>
+  </div>
+
+  <div id="game-view" class="view">
+    <div class="game-header">
+      <div class="game-room-info">
+        <span class="label">Комната:</span>
+        <span id="game-room-code"></span>
+      </div>
+      <div id="game-direction" class="direction">→</div>
+      <button id="game-leave-btn" class="btn btn-danger btn-small">Выйти</button>
+    </div>
+
+    <div class="game-table">
+      <div class="opponents" id="opponents"></div>
+
+      <div class="table-center">
+        <div class="discard-area">
+          <div id="discard-pile" class="discard-pile"></div>
+          <div id="draw-pile" class="draw-pile" title="Взять карту">
+            <div class="card card-back">UNO</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="player-area">
+        <div class="player-info">
+          <span id="player-name" class="player-name"></span>
+          <button id="uno-btn" class="btn btn-warning btn-small">UNO!</button>
+        </div>
+        <div class="hand" id="player-hand"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="color-picker-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Выбери цвет</h3>
+      <div class="color-choices">
+        <div class="color-choice" data-color="red" style="background:#e74c3c"></div>
+        <div class="color-choice" data-color="yellow" style="background:#f1c40f"></div>
+        <div class="color-choice" data-color="green" style="background:#2ecc71"></div>
+        <div class="color-choice" data-color="blue" style="background:#3498db"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="game-over-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>🏆 Игра окончена!</h2>
+      <p id="winner-text"></p>
+      <button id="back-to-lobby-btn" class="btn btn-primary">Вернуться в лобби</button>
+    </div>
+  </div>
+
+  <div id="turn-notification" class="turn-notification hidden"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
