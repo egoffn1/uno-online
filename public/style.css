@@ -372,6 +372,56 @@ input::placeholder { color: var(--text-muted); }
   overflow: hidden;
 }
 
+.game-info-bar {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border-radius: 10px;
+  flex-shrink: 0;
+  animation: slideDown 0.4s ease;
+  flex-wrap: wrap;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.info-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.turn-player {
+  font-weight: 800;
+  color: var(--accent);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.color-chip {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  transition: background 0.3s;
+}
+
+.color-chip-text {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.deck-count {
+  font-weight: 700;
+  color: var(--text);
+}
+
 .opponents {
   display: flex;
   gap: 8px;
@@ -386,27 +436,55 @@ input::placeholder { color: var(--text-muted); }
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 8px 14px;
+  padding: 10px 16px;
   background: var(--surface);
-  border-radius: 10px;
-  min-width: 80px;
+  border-radius: 12px;
+  min-width: 88px;
   border: 2px solid transparent;
   transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+  position: relative;
 }
 
 .opponent-card.active-turn {
   border-color: var(--accent);
-  box-shadow: 0 0 20px rgba(241,196,15,0.3);
+  box-shadow: 0 0 25px rgba(241,196,15,0.3), inset 0 0 15px rgba(241,196,15,0.05);
   animation: glow 1.5s ease-in-out infinite;
+  transform: translateY(-2px);
 }
 
 .opponent-card.active-turn .opponent-cards {
   animation: float 2s ease-in-out infinite;
 }
 
+.opponent-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  animation: bounceIn 0.4s ease;
+}
+
+.opponent-card.active-turn .opponent-avatar {
+  box-shadow: 0 0 15px var(--accent);
+}
+
 .opponent-name { font-size: 12px; font-weight: 600; }
 .opponent-cards { font-size: 20px; }
 .opponent-cards span { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+
+.opponent-turn-arrow {
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: 1px;
+  animation: pulse 1s ease-in-out infinite;
+  margin-top: 2px;
+}
 
 .table-center {
   flex: 1;

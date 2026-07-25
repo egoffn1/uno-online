@@ -31,7 +31,8 @@ function getRoomState(room) {
     discardTop: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null,
     currentColor: room.currentColor,
     currentValue: room.currentValue,
-    pendingDraw: room.pendingDraw
+    pendingDraw: room.pendingDraw,
+    remainingDeck: room.deck.length
   }
 }
 

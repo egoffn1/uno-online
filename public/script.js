@@ -253,24 +253,59 @@ function enterGame(gameState, hands) {
 function renderGame(gs) {
   window._lastGameState = gs
 
+  // Direction
   const dir = $('game-direction')
   if (dir) {
     dir.textContent = gs.direction === 1 ? '→' : '←'
     dir.style.transform = gs.direction === 1 ? 'scaleX(1)' : 'scaleX(-1)'
   }
 
+  // Turn indicator
+  const turnPlayer = $('turn-player')
+  const turnIndicator = $('turn-indicator')
+  if (turnPlayer && gs.players[gs.currentPlayerIndex]) {
+    turnPlayer.textContent = gs.players[gs.currentPlayerIndex].name
+  }
+  if (turnIndicator) {
+    const isMe = gs.currentPlayerIndex === myPlayerIndex
+    turnIndicator.style.borderColor = isMe ? 'var(--accent)' : 'transparent'
+  }
+
+  // Current color
+  const colorChip = $('current-color-chip')
+  if (colorChip) {
+    if (gs.currentColor) {
+      const colorMap = { red: '#e74c3c', yellow: '#f1c40f', green: '#2ecc71', blue: '#3498db' }
+      colorChip.innerHTML = `<span class="color-chip" style="background:${colorMap[gs.currentColor] || '#333'};display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,0.3);vertical-align:middle;margin-right:4px"></span><span class="color-chip-text">${gs.currentColor}</span>`
+    } else {
+      colorChip.textContent = '—'
+    }
+  }
+
+  // Deck count
+  const deckCount = $('deck-count')
+  if (deckCount) {
+    deckCount.textContent = gs.remainingDeck !== undefined ? String(gs.remainingDeck) : '?'
+  }
+
+  // Opponents
   const opp = $('opponents')
   if (opp) {
     opp.innerHTML = gs.players
       .filter(p => p.id !== socket.id)
-      .map(p => `
-        <div class="opponent-card ${gs.currentPlayerIndex === gs.players.findIndex(x => x.id === p.id) ? 'active-turn' : ''}">
+      .map((p, i) => {
+        const isActive = gs.currentPlayerIndex === gs.players.findIndex(x => x.id === p.id)
+        return `
+        <div class="opponent-card ${isActive ? 'active-turn' : ''}">
+          <div class="opponent-avatar" style="background:${getAvatarColor(p.name)}">${getInitials(p.name)}</div>
           <div class="opponent-name">${p.name}</div>
           <div class="opponent-cards">🃏<span>×${p.cardsCount}</span></div>
-        </div>
-      `).join('')
+          ${isActive ? '<div class="opponent-turn-arrow">◀ ХОДИТ</div>' : ''}
+        </div>`
+      }).join('')
   }
 
+  // Discard pile
   const discard = $('discard-pile')
   if (discard) {
     if (gs.discardTop) {
@@ -287,10 +322,18 @@ function renderGame(gs) {
     }
   }
 
+  // Player name
   const pn = $('player-name')
   if (pn) {
     const me = gs.players.find(p => p.id === socket.id)
     pn.textContent = me ? me.name : ''
+    if (gs.currentPlayerIndex === myPlayerIndex) {
+      pn.style.color = 'var(--accent)'
+      pn.style.fontWeight = '900'
+    } else {
+      pn.style.color = ''
+      pn.style.fontWeight = ''
+    }
   }
 
   renderHand()
