@@ -1,6 +1,5 @@
 const COLORS = ['red', 'yellow', 'green', 'blue']
 const VALUES = ['0','1','2','3','4','5','6','7','8','9','skip','reverse','draw2']
-const WILD_VALUES = ['wild', 'wild4']
 
 let roomIdCounter = 100000
 
@@ -33,8 +32,24 @@ function shuffle(arr) {
   return arr
 }
 
-function createRoom(hostName) {
-  const room = {
+const defaultSettings = {
+  comboStacking: false,
+  includeWild4: true,
+  includeWild: true,
+  includeDraw2: true,
+  includeSkip: true,
+  includeReverse: true,
+  handSize: 7,
+  pointsToWin: 0
+}
+
+const gameModes = {
+  classic: { label: 'Классический', ...defaultSettings },
+  combo: { label: 'Комбо', ...defaultSettings, comboStacking: true }
+}
+
+function createRoom(mode = 'classic') {
+  return {
     id: generateRoomId(),
     players: [],
     deck: [],
@@ -43,12 +58,12 @@ function createRoom(hostName) {
     direction: 1,
     phase: 'waiting',
     winner: null,
-    turn: null,
     pendingDraw: 0,
     currentColor: null,
-    currentValue: null
+    currentValue: null,
+    mode,
+    settings: { ...gameModes[mode] || gameModes.classic }
   }
-  return room
 }
 
 function addPlayer(room, socketId, name) {
@@ -57,7 +72,6 @@ function addPlayer(room, socketId, name) {
     name,
     hand: [],
     isHost: room.players.length === 0,
-    ready: false,
     calledUno: false
   }
   room.players.push(player)
@@ -67,23 +81,49 @@ function addPlayer(room, socketId, name) {
 function removePlayer(room, socketId) {
   const idx = room.players.findIndex(p => p.id === socketId)
   if (idx === -1) return null
+  const wasHost = room.players[idx].isHost
   const removed = room.players.splice(idx, 1)[0]
-  if (room.players.length > 0 && removed.isHost) {
-    room.players[0].isHost = true
-  }
+
   if (room.phase === 'playing') {
     if (idx < room.currentPlayerIndex) {
       room.currentPlayerIndex--
+    } else if (idx === room.currentPlayerIndex) {
+      advanceTurn(room)
     }
-    if (room.currentPlayerIndex >= room.players.length) {
+    if (room.currentPlayerIndex >= room.players.length && room.players.length > 0) {
       room.currentPlayerIndex = 0
     }
+    if (room.players.length < 2) {
+      room.phase = 'ended'
+      room.winner = room.players.length === 1 ? room.players[0].name : null
+    }
   }
+
+  if (wasHost && room.players.length > 0) {
+    room.players[0].isHost = true
+  }
+
   return removed
 }
 
+function filterDeck(room, deck) {
+  const s = room.settings
+  let filtered = [...deck]
+  if (!s.includeWild4) filtered = filtered.filter(c => c.value !== 'wild4')
+  if (!s.includeWild) filtered = filtered.filter(c => c.value !== 'wild')
+  if (!s.includeDraw2) filtered = filtered.filter(c => c.value !== 'draw2')
+  if (!s.includeSkip) filtered = filtered.filter(c => c.value !== 'skip')
+  if (!s.includeReverse) filtered = filtered.filter(c => c.value !== 'reverse')
+  return filtered
+}
+
 function startGame(room) {
-  const deck = shuffle(createDeck())
+  let deck = shuffle(createDeck())
+  deck = filterDeck(room, deck)
+  if (deck.length < room.settings.handSize * room.players.length + 1) {
+    return { error: 'Слишком мало карт для такого количества игроков' }
+  }
+
   room.deck = deck
   room.discardPile = []
   room.currentPlayerIndex = 0
@@ -94,9 +134,8 @@ function startGame(room) {
 
   for (const player of room.players) {
     player.hand = []
-    player.ready = false
     player.calledUno = false
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < room.settings.handSize; i++) {
       player.hand.push(deck.pop())
     }
   }
@@ -119,7 +158,7 @@ function startGame(room) {
     room.pendingDraw = 2
   }
 
-  return room
+  return { success: true }
 }
 
 function drawCards(room, count) {
@@ -153,10 +192,24 @@ function playCard(room, playerIndex, cardIndex, chosenColor) {
   if (!player) return { error: 'Игрок не найден' }
   if (room.phase !== 'playing') return { error: 'Игра не начата' }
   if (room.currentPlayerIndex !== playerIndex) return { error: 'Не твой ход' }
-  if (room.pendingDraw > 0) return { error: 'Сначала возьми карты' }
 
   const card = player.hand[cardIndex]
   if (!card) return { error: 'Карта не найдена' }
+
+  if (room.pendingDraw > 0) {
+    if (!room.settings.comboStacking) {
+      return { error: 'Сначала возьми карты' }
+    }
+    if (card.value !== 'draw2' && card.value !== 'wild4') {
+      return { error: 'Сыграй +2 или +4 чтобы усилить' }
+    }
+    if (card.value === 'draw2' && room.currentValue !== 'draw2') {
+      return { error: 'Можно усилить только +2' }
+    }
+    if (card.value === 'wild4' && room.currentValue !== 'wild4') {
+      return { error: 'Можно усилить только +4' }
+    }
+  }
 
   if (!canPlayCard(card, room.currentColor, room.currentValue)) {
     return { error: 'Нельзя сыграть эту карту' }
@@ -174,6 +227,13 @@ function playCard(room, playerIndex, cardIndex, chosenColor) {
   } else {
     room.currentColor = card.color
     room.currentValue = card.value
+  }
+
+  if (room.pendingDraw > 0 && room.settings.comboStacking) {
+    if (card.value === 'draw2') room.pendingDraw += 2
+    else if (card.value === 'wild4') room.pendingDraw += 4
+    advanceTurn(room)
+    return { success: true }
   }
 
   if (card.value === 'skip') {
@@ -217,6 +277,7 @@ function drawAction(room, playerIndex) {
 }
 
 function advanceTurn(room) {
+  if (room.players.length === 0) return
   const total = room.players.length
   room.currentPlayerIndex = (room.currentPlayerIndex + room.direction + total) % total
 }
@@ -231,15 +292,26 @@ function callUno(room, playerIndex) {
   return { error: 'Нельзя крикнуть UNO сейчас' }
 }
 
-function catchUno(room, callerIndex, targetIndex) {
-  const target = room.players[targetIndex]
-  if (!target) return { error: 'Игрок не найден' }
-  if (target.hand.length === 1 && !target.calledUno) {
-    const penalty = drawCards(room, 2)
-    target.hand.push(...penalty)
-    return { success: true, penalty: 2 }
+function updateSettings(room, mode, settings) {
+  if (mode && gameModes[mode]) {
+    room.mode = mode
+    room.settings = { ...gameModes[mode] }
+    if (settings) {
+      for (const key of Object.keys(defaultSettings)) {
+        if (settings[key] !== undefined) {
+          room.settings[key] = settings[key]
+        }
+      }
+    }
+  } else if (settings) {
+    room.mode = 'custom'
+    for (const key of Object.keys(defaultSettings)) {
+      if (settings[key] !== undefined) {
+        room.settings[key] = settings[key]
+      }
+    }
   }
-  return { error: 'Нечего ловить' }
+  return room.settings
 }
 
 module.exports = {
@@ -250,6 +322,8 @@ module.exports = {
   playCard,
   drawAction,
   callUno,
-  catchUno,
-  COLORS
+  updateSettings,
+  COLORS,
+  defaultSettings,
+  gameModes
 }

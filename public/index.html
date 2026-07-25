@@ -13,6 +13,10 @@
     <div class="subtitle">Online</div>
     <div class="lobby-form">
       <input type="text" id="name-input" placeholder="Твоё имя" maxlength="20">
+      <div class="mode-select lobby-mode">
+        <button class="mode-btn active" data-mode="classic">Классический</button>
+        <button class="mode-btn" data-mode="combo">Комбо</button>
+      </div>
       <div class="lobby-buttons">
         <button id="create-btn" class="btn btn-primary">Создать комнату</button>
         <div class="divider">или</div>
@@ -35,6 +39,18 @@
       </div>
       <button id="leave-btn" class="btn btn-danger btn-small">Выйти</button>
     </div>
+
+    <div id="waiting-settings" class="waiting-settings">
+      <div class="waiting-mode-select">
+        <span class="label">Режим:</span>
+        <div id="mode-buttons" class="mode-select small">
+          <button class="mode-btn" data-mode="classic">Классический</button>
+          <button class="mode-btn" data-mode="combo">Комбо</button>
+        </div>
+      </div>
+      <button id="settings-btn" class="btn btn-small btn-secondary">⚙️ Настройки</button>
+    </div>
+
     <div class="players-list" id="waiting-players"></div>
     <div class="waiting-actions">
       <div id="players-count" class="players-count">0 игроков</div>
@@ -99,6 +115,46 @@
         <div class="color-choice" data-color="yellow" style="background:#f1c40f"></div>
         <div class="color-choice" data-color="green" style="background:#2ecc71"></div>
         <div class="color-choice" data-color="blue" style="background:#3498db"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Расширенные настройки</h3>
+      <div class="settings-list">
+        <label class="setting-row">
+          <span>Комбо (+2/+4 стэкинг)</span>
+          <input type="checkbox" id="set-comboStacking">
+        </label>
+        <label class="setting-row">
+          <span>Включать +4 (Wild Draw Four)</span>
+          <input type="checkbox" id="set-includeWild4" checked>
+        </label>
+        <label class="setting-row">
+          <span>Включать W (Wild)</span>
+          <input type="checkbox" id="set-includeWild" checked>
+        </label>
+        <label class="setting-row">
+          <span>Включать +2 (Draw Two)</span>
+          <input type="checkbox" id="set-includeDraw2" checked>
+        </label>
+        <label class="setting-row">
+          <span>Включать Пропуск хода (Skip)</span>
+          <input type="checkbox" id="set-includeSkip" checked>
+        </label>
+        <label class="setting-row">
+          <span>Включать Реверс (Reverse)</span>
+          <input type="checkbox" id="set-includeReverse" checked>
+        </label>
+        <div class="setting-row">
+          <span>Карт в руке</span>
+          <input type="number" id="set-handSize" min="3" max="21" value="7" class="setting-number">
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button id="settings-apply-btn" class="btn btn-primary">Применить</button>
+        <button id="settings-cancel-btn" class="btn btn-danger">Отмена</button>
       </div>
     </div>
   </div>

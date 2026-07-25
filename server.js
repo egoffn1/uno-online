@@ -17,11 +17,12 @@ function getRoomState(room) {
   return {
     id: room.id,
     phase: room.phase,
+    mode: room.mode,
+    settings: room.settings,
     players: room.players.map(p => ({
       id: p.id,
       name: p.name,
       isHost: p.isHost,
-      ready: p.ready,
       cardsCount: p.hand.length,
       calledUno: p.calledUno
     })),
@@ -44,6 +45,7 @@ function disconnectPlayer(socket) {
 
   const player = room.players.find(p => p.id === socket.id)
   const playerName = player ? player.name : ''
+  const wasHost = player ? player.isHost : false
 
   engine.removePlayer(room, socket.id)
   socketToRoom.delete(socket.id)
@@ -51,20 +53,34 @@ function disconnectPlayer(socket) {
 
   if (room.players.length === 0) {
     rooms.delete(roomId)
-  } else {
-    io.to(roomId).emit('room_update', getRoomState(room))
-    if (room.phase === 'playing') {
-      io.to(roomId).emit('player_left', { id: socket.id, name: playerName })
+    return
+  }
+
+  io.to(roomId).emit('room_update', getRoomState(room))
+
+  if (room.phase === 'ended') {
+    if (room.winner) {
+      io.to(roomId).emit('game_over', { winner: room.winner, reason: 'disconnect' })
+    } else {
+      io.to(roomId).emit('game_over', { winner: null, reason: 'all_left' })
     }
+    return
+  }
+
+  if (room.phase === 'playing') {
+    const newHost = wasHost && room.players.length > 0 ? room.players[0] : null
+    io.to(roomId).emit('player_left', {
+      name: playerName,
+      newHost: newHost ? newHost.name : null,
+      playerCount: room.players.length
+    })
   }
 }
 
 io.on('connection', (socket) => {
-  socket.on('create_room', ({ name }, callback) => {
-    if (!name || name.trim().length === 0) {
-      return callback({ error: 'Введи имя' })
-    }
-    const room = engine.createRoom(name.trim())
+  socket.on('create_room', ({ name, mode }, callback) => {
+    if (!name || name.trim().length === 0) return callback({ error: 'Введи имя' })
+    const room = engine.createRoom(mode || 'classic')
     engine.addPlayer(room, socket.id, name.trim())
     rooms.set(room.id, room)
     socketToRoom.set(socket.id, room.id)
@@ -73,9 +89,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('join_room', ({ roomId, name }, callback) => {
-    if (!name || name.trim().length === 0) {
-      return callback({ error: 'Введи имя' })
-    }
+    if (!name || name.trim().length === 0) return callback({ error: 'Введи имя' })
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
     if (room.phase !== 'waiting') return callback({ error: 'Игра уже началась' })
@@ -91,10 +105,10 @@ io.on('connection', (socket) => {
   socket.on('rejoin', ({ roomId, name }, callback) => {
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
-    const oldPlayer = room.players.find(p => p.id === socket.id)
-    if (!oldPlayer) return callback({ error: 'Не в этой комнате' })
+    const player = room.players.find(p => p.id === socket.id)
+    if (!player) return callback({ error: 'Не в этой комнате' })
 
-    oldPlayer.name = name.trim() || oldPlayer.name
+    player.name = name.trim() || player.name
     socketToRoom.set(socket.id, room.id)
     socket.join(roomId)
 
@@ -102,6 +116,20 @@ io.on('connection', (socket) => {
     room.players.forEach(p => { hands[p.id] = p.hand })
     callback({ state: getRoomState(room), hands })
     io.to(roomId).emit('room_update', getRoomState(room))
+  })
+
+  socket.on('update_settings', ({ mode, settings }, callback) => {
+    const roomId = socketToRoom.get(socket.id)
+    if (!roomId) return callback({ error: 'Не в комнате' })
+    const room = rooms.get(roomId)
+    if (!room) return callback({ error: 'Комната не найдена' })
+    const player = room.players.find(p => p.id === socket.id)
+    if (!player || !player.isHost) return callback({ error: 'Только хост может менять настройки' })
+
+    const newSettings = engine.updateSettings(room, mode, settings)
+    io.to(roomId).emit('settings_updated', { mode: room.mode, settings: newSettings })
+    io.to(roomId).emit('room_update', getRoomState(room))
+    callback({ success: true, mode: room.mode, settings: newSettings })
   })
 
   socket.on('start_game', (_, callback) => {
@@ -113,13 +141,12 @@ io.on('connection', (socket) => {
     if (!player || !player.isHost) return callback({ error: 'Только хост может начать' })
     if (room.players.length < 2) return callback({ error: 'Нужно минимум 2 игрока' })
 
-    engine.startGame(room)
+    const result = engine.startGame(room)
+    if (result.error) return callback({ error: result.error })
+
     const hands = {}
     room.players.forEach(p => { hands[p.id] = p.hand })
-    io.to(roomId).emit('game_start', {
-      state: getRoomState(room),
-      hands
-    })
+    io.to(roomId).emit('game_start', { state: getRoomState(room), hands })
     callback({ success: true })
   })
 
@@ -135,9 +162,8 @@ io.on('connection', (socket) => {
     if (result.error) return callback({ error: result.error })
 
     io.to(roomId).emit('room_update', getRoomState(room))
-    room.players.forEach(p => {
-      io.to(p.id).emit('hand_update', { hand: p.hand })
-    })
+    room.players.forEach(p => io.to(p.id).emit('hand_update', { hand: p.hand }))
+
     if (result.winner) {
       io.to(roomId).emit('game_over', { winner: result.winner })
     }
@@ -156,9 +182,7 @@ io.on('connection', (socket) => {
     if (result.error) return callback({ error: result.error })
 
     io.to(roomId).emit('room_update', getRoomState(room))
-    room.players.forEach(p => {
-      io.to(p.id).emit('hand_update', { hand: p.hand })
-    })
+    room.players.forEach(p => io.to(p.id).emit('hand_update', { hand: p.hand }))
     callback({ success: true })
   })
 

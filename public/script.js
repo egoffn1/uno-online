@@ -4,6 +4,7 @@ let state = { roomId: null, name: null, isHost: false, hand: [], inGame: false }
 let pendingWildCard = null
 let myPlayerIndex = -1
 let isAnimating = false
+let selectedMode = 'classic'
 
 const socket = io({
   reconnection: true,
@@ -26,9 +27,10 @@ function getCardSymbol(value) {
   return s[value] || value
 }
 
-function createCardEl(card) {
+function createCardEl(card, chosenColor) {
+  const displayColor = chosenColor || card.color
   const el = document.createElement('div')
-  el.className = `card ${card.color}`
+  el.className = `card ${displayColor}`
   el.dataset.id = card.id
   const sym = getCardSymbol(card.value)
   const isNum = /^\d$/.test(card.value)
@@ -61,7 +63,10 @@ function getInitials(name) {
   return name.slice(0, 2).toUpperCase()
 }
 
-// Connection status
+const colorMap = { red: '#e74c3c', yellow: '#f1c40f', green: '#2ecc71', blue: '#3498db' }
+const colorNamesRu = { red: 'Красный', yellow: 'Жёлтый', green: 'Зелёный', blue: 'Синий' }
+
+// === Connection status ===
 const statusEl = document.createElement('div')
 statusEl.id = 'conn-status'
 statusEl.style.cssText = 'position:fixed;top:8px;right:8px;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;z-index:200;transition:all 0.3s'
@@ -91,15 +96,10 @@ socket.on('connect', () => {
   }
 })
 
-socket.on('disconnect', () => {
-  setConnStatus(false, 'Reconnecting...')
-})
+socket.on('disconnect', () => setConnStatus(false, 'Reconnecting...'))
+socket.on('connect_error', () => setConnStatus(false, 'Connection error'))
 
-socket.on('connect_error', () => {
-  setConnStatus(false, 'Connection error')
-})
-
-// Lobby
+// === Error display ===
 function showError(msg) {
   const el = $('error-msg')
   if (el) { el.textContent = msg; el.classList.remove('hidden') }
@@ -107,7 +107,18 @@ function showError(msg) {
   if (ge) {
     ge.textContent = msg
     ge.classList.remove('hidden')
-    setTimeout(() => ge.classList.add('hidden'), 3000)
+    clearTimeout(ge._timeout)
+    ge._timeout = setTimeout(() => ge.classList.add('hidden'), 4000)
+  }
+  const tn = $('turn-notification')
+  if (tn && msg.length < 40) {
+    tn.textContent = '⚠ ' + msg
+    tn.classList.remove('hidden')
+    tn.style.animation = 'none'
+    void tn.offsetHeight
+    tn.style.background = 'linear-gradient(135deg, #e67e22, #d35400)'
+    tn.style.animation = 'fadeInOut 2.5s ease forwards'
+    setTimeout(() => { tn.classList.add('hidden'); tn.style.background = '' }, 2500)
   }
 }
 
@@ -116,27 +127,39 @@ function hideError() {
   if (el) el.classList.add('hidden')
 }
 
+// === Mode selector ===
+function initModeButtons(container) {
+  container.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      selectedMode = btn.dataset.mode
+      if (state.isHost && state.roomId) {
+        socket.emit('update_settings', { mode: selectedMode }, () => {})
+      }
+    })
+  })
+}
+
+initModeButtons(document.querySelector('#lobby-view .mode-select'))
+initModeButtons(document.querySelector('#waiting-view .mode-select'))
+
+// === Lobby ===
 $('create-btn').addEventListener('click', () => {
   const name = $('name-input').value.trim()
   if (!name) { showError('Введи имя!'); return }
   if (!socket.connected) { showError('Нет соединения с сервером'); return }
-  hideError()
-  state.name = name
+  hideError(); state.name = name
   $('create-btn').disabled = true
-  socket.emit('create_room', { name }, (res) => {
+  socket.emit('create_room', { name, mode: selectedMode }, (res) => {
     $('create-btn').disabled = false
     if (res.error) { showError(res.error); return }
-    state.roomId = res.roomId
-    state.isHost = true
-    state.inGame = false
+    state.roomId = res.roomId; state.isHost = true; state.inGame = false
     enterWaiting(res.state)
   })
 })
 
-$('join-btn').addEventListener('click', () => {
-  joinRoom($('room-input').value.trim())
-})
-
+$('join-btn').addEventListener('click', () => joinRoom($('room-input').value.trim()))
 $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('create-btn').click() })
 $('room-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click() })
 
@@ -145,15 +168,12 @@ function joinRoom(roomId) {
   const name = $('name-input').value.trim()
   if (!name) { showError('Введи имя!'); return }
   if (!socket.connected) { showError('Нет соединения с сервером'); return }
-  hideError()
-  state.name = name
+  hideError(); state.name = name
   $('join-btn').disabled = true
   socket.emit('join_room', { roomId, name }, (res) => {
     $('join-btn').disabled = false
     if (res.error) { showError(res.error); return }
-    state.roomId = roomId
-    state.isHost = false
-    state.inGame = false
+    state.roomId = roomId; state.isHost = false; state.inGame = false
     enterWaiting(res.state)
   })
 }
@@ -170,20 +190,69 @@ if (inviteRoom) {
   $('name-input').focus()
 }
 
-// Waiting room
+// === Settings ===
+function openSettingsModal(settings) {
+  const modal = $('settings-modal')
+  if (!modal) return
+  if (settings) {
+    $('set-comboStacking').checked = !!settings.comboStacking
+    $('set-includeWild4').checked = settings.includeWild4 !== false
+    $('set-includeWild').checked = settings.includeWild !== false
+    $('set-includeDraw2').checked = settings.includeDraw2 !== false
+    $('set-includeSkip').checked = settings.includeSkip !== false
+    $('set-includeReverse').checked = settings.includeReverse !== false
+    $('set-handSize').value = settings.handSize || 7
+  }
+  modal.classList.remove('hidden')
+}
+
+$('settings-apply-btn').addEventListener('click', () => {
+  const settings = {
+    comboStacking: $('set-comboStacking').checked,
+    includeWild4: $('set-includeWild4').checked,
+    includeWild: $('set-includeWild').checked,
+    includeDraw2: $('set-includeDraw2').checked,
+    includeSkip: $('set-includeSkip').checked,
+    includeReverse: $('set-includeReverse').checked,
+    handSize: parseInt($('set-handSize').value) || 7
+  }
+  $('settings-modal').classList.add('hidden')
+  socket.emit('update_settings', { settings }, (res) => {
+    if (res && res.error) showError(res.error)
+  })
+})
+
+$('settings-cancel-btn').addEventListener('click', () => {
+  $('settings-modal').classList.add('hidden')
+})
+
+// === Waiting room ===
 function enterWaiting(roomState) {
   showView('waiting-view')
   $('room-code').textContent = roomState.id
   $('game-room-code').textContent = roomState.id
   $('start-btn').classList.add('hidden')
   updatePlayersList(roomState.players)
+
+  selectedMode = roomState.mode || 'classic'
+  const modeBtns = document.querySelectorAll('#waiting-view .mode-btn')
+  modeBtns.forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === selectedMode)
+  })
+
+  const canEdit = state.isHost && roomState.phase === 'waiting'
+  document.querySelectorAll('#waiting-view .mode-btn').forEach(b => {
+    b.style.pointerEvents = canEdit ? '' : 'none'
+    b.style.opacity = canEdit ? '' : '0.5'
+  })
+  $('settings-btn').style.display = canEdit ? '' : 'none'
 }
 
 function updatePlayersList(players) {
   const list = $('waiting-players')
   if (!list) return
   list.innerHTML = players.map(p => `
-    <div class="player-item ${p.isHost ? 'host' : ''}">
+    <div class="player-item ${p.isHost ? 'host' : ''}" style="animation-delay:${players.indexOf(p) * 0.08}s">
       <div class="player-avatar" style="background:${getAvatarColor(p.name)}">${getInitials(p.name)}</div>
       <span class="player-name">${p.name} ${p.isHost ? '<span class="host-badge">ХОСТ</span>' : ''}</span>
     </div>
@@ -193,14 +262,9 @@ function updatePlayersList(players) {
   const me = players.find(p => p.id === socket.id)
   const startBtn = $('start-btn')
   if (startBtn) {
-    if (me && me.isHost && players.length >= 2) {
-      startBtn.classList.remove('hidden')
-    } else {
-      startBtn.classList.add('hidden')
-    }
+    if (me && me.isHost && players.length >= 2) startBtn.classList.remove('hidden')
+    else startBtn.classList.add('hidden')
   }
-  const pn = $('player-name')
-  if (pn && me) pn.textContent = me.name
 }
 
 $('start-btn').addEventListener('click', () => {
@@ -217,19 +281,23 @@ $('copy-btn').addEventListener('click', () => {
     $('copy-btn').textContent = '✅'
     setTimeout(() => { $('copy-btn').textContent = '📋' }, 2000)
   }).catch(() => {
-    const code = $('room-code').textContent
-    navigator.clipboard.writeText(code).then(() => {
+    navigator.clipboard.writeText($('room-code').textContent).then(() => {
       $('copy-btn').textContent = '✅'
       setTimeout(() => { $('copy-btn').textContent = '📋' }, 2000)
     })
   })
 })
 
+$('settings-btn').addEventListener('click', () => {
+  if (state.isHost && window._lastSettings) {
+    openSettingsModal(window._lastSettings)
+  }
+})
+
 function leaveRoom() {
   socket.emit('leave')
   state = { roomId: null, name: state.name, isHost: false, hand: [], inGame: false }
-  $('create-btn').disabled = false
-  $('join-btn').disabled = false
+  $('create-btn').disabled = false; $('join-btn').disabled = false
   showView('lobby-view')
 }
 
@@ -240,104 +308,94 @@ $('back-to-lobby-btn').addEventListener('click', () => {
   leaveRoom()
 })
 
-// Game
+// === Game ===
 function enterGame(gameState, hands) {
   state.inGame = true
   state.hand = hands[socket.id] || []
   myPlayerIndex = -1
   gameState.players.forEach((p, i) => { if (p.id === socket.id) myPlayerIndex = i })
   showView('game-view')
-  renderGame(gameState)
+  scheduleDealAnimation(gameState)
+}
+
+function scheduleDealAnimation(gs) {
+  const container = $('player-hand')
+  if (!container) return
+  container.innerHTML = ''
+
+  state.hand.forEach((card, i) => {
+    const el = createCardEl(card)
+    el.classList.add('entering')
+    el.style.setProperty('--fly-y', '-80px')
+    el.style.setProperty('--fly-x', `${(Math.random() - 0.5) * 100}px`)
+    el.style.animationDelay = `${i * 0.06}s`
+    const idx = i
+    el.addEventListener('click', () => onCardClick(idx))
+    container.appendChild(el)
+  })
+
+  setTimeout(() => renderGame(gs), state.hand.length * 60 + 600)
 }
 
 function renderGame(gs) {
   window._lastGameState = gs
 
-  // Direction
   const dir = $('game-direction')
   if (dir) {
     dir.textContent = gs.direction === 1 ? '→' : '←'
     dir.style.transform = gs.direction === 1 ? 'scaleX(1)' : 'scaleX(-1)'
   }
 
-  // Turn indicator
   const turnPlayer = $('turn-player')
   const turnIndicator = $('turn-indicator')
   if (turnPlayer && gs.players[gs.currentPlayerIndex]) {
-    const currentName = gs.players[gs.currentPlayerIndex].name
-    turnPlayer.textContent = currentName
-    if (gs.pendingDraw && gs.pendingDraw > 0) {
-      turnPlayer.textContent = `${currentName} (+${gs.pendingDraw})`
-    }
+    const name = gs.players[gs.currentPlayerIndex].name
+    turnPlayer.textContent = gs.pendingDraw > 0 ? `${name} (+${gs.pendingDraw})` : name
   }
   if (turnIndicator) {
     const isMe = gs.currentPlayerIndex === myPlayerIndex
     turnIndicator.style.borderColor = isMe ? 'var(--accent)' : 'transparent'
+    turnIndicator.style.boxShadow = isMe ? '0 0 20px rgba(241,196,15,0.3)' : 'none'
+    turnPlayer.style.color = isMe ? 'var(--accent)' : ''
+    turnPlayer.style.animation = isMe ? 'pulse 1s ease-in-out infinite' : 'none'
   }
 
-  // Current color
   const colorChip = $('current-color-chip')
   if (colorChip) {
-    if (gs.currentColor) {
-      const colorMap = { red: '#e74c3c', yellow: '#f1c40f', green: '#2ecc71', blue: '#3498db' }
-      colorChip.innerHTML = `<span class="color-chip" style="background:${colorMap[gs.currentColor] || '#333'};display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,0.3);vertical-align:middle;margin-right:4px"></span><span class="color-chip-text">${gs.currentColor}</span>`
+    if (gs.currentColor && gs.currentColor !== 'wild') {
+      const c = colorMap[gs.currentColor] || '#555'
+      colorChip.innerHTML = `<span class="chip-dot" style="background:${c}"></span><span class="color-chip-text">${colorNamesRu[gs.currentColor] || gs.currentColor}</span>`
     } else {
       colorChip.textContent = '—'
     }
   }
 
-  // Deck count
   const deckCount = $('deck-count')
-  if (deckCount) {
-    deckCount.textContent = gs.remainingDeck !== undefined ? String(gs.remainingDeck) : '?'
-  }
+  if (deckCount) deckCount.textContent = gs.remainingDeck !== undefined ? String(gs.remainingDeck) : '?'
 
-  // Opponents
   const opp = $('opponents')
   if (opp) {
-    opp.innerHTML = gs.players
-      .filter(p => p.id !== socket.id)
-      .map((p, i) => {
-        const isActive = gs.currentPlayerIndex === gs.players.findIndex(x => x.id === p.id)
-        return `
+    opp.innerHTML = gs.players.filter(p => p.id !== socket.id).map(p => {
+      const isActive = gs.currentPlayerIndex === gs.players.findIndex(x => x.id === p.id)
+      return `
         <div class="opponent-card ${isActive ? 'active-turn' : ''}">
           <div class="opponent-avatar" style="background:${getAvatarColor(p.name)}">${getInitials(p.name)}</div>
           <div class="opponent-name">${p.name}</div>
           <div class="opponent-cards">🃏<span>×${p.cardsCount}</span></div>
           ${isActive ? '<div class="opponent-turn-arrow">◀ ХОДИТ</div>' : ''}
         </div>`
-      }).join('')
+    }).join('')
   }
 
-  // Discard pile
-  const discard = $('discard-pile')
-  if (discard) {
-    if (gs.discardTop) {
-      discard.innerHTML = ''
-      const cardEl = createCardEl(gs.discardTop)
-      discard.appendChild(cardEl)
-      if (gs.currentColor && gs.discardTop.color === 'wild') {
-        const tag = document.createElement('div')
-        tag.style.cssText = 'position:absolute;bottom:-4px;font-size:11px;font-weight:700;background:rgba(0,0,0,0.6);padding:2px 8px;border-radius:4px;color:#fff'
-        tag.textContent = gs.currentColor
-        cardEl.appendChild(tag)
-        cardEl.style.position = 'relative'
-      }
-    }
-  }
+  renderDiscardPile(gs)
 
-  // Player name
   const pn = $('player-name')
   if (pn) {
     const me = gs.players.find(p => p.id === socket.id)
     pn.textContent = me ? me.name : ''
-    if (gs.currentPlayerIndex === myPlayerIndex) {
-      pn.style.color = 'var(--accent)'
-      pn.style.fontWeight = '900'
-    } else {
-      pn.style.color = ''
-      pn.style.fontWeight = ''
-    }
+    pn.style.color = gs.currentPlayerIndex === myPlayerIndex ? 'var(--accent)' : ''
+    pn.style.fontWeight = gs.currentPlayerIndex === myPlayerIndex ? '900' : ''
+    pn.style.animation = gs.currentPlayerIndex === myPlayerIndex ? 'pulse 1.5s ease-in-out infinite' : 'none'
   }
 
   renderHand()
@@ -351,6 +409,17 @@ function renderGame(gs) {
   }
 }
 
+function renderDiscardPile(gs) {
+  const discard = $('discard-pile')
+  if (!discard) return
+  if (!gs.discardTop) { discard.innerHTML = ''; return }
+
+  discard.innerHTML = ''
+  const chosenColor = gs.discardTop.color === 'wild' && gs.currentColor ? gs.currentColor : null
+  const cardEl = createCardEl(gs.discardTop, chosenColor)
+  discard.appendChild(cardEl)
+}
+
 function triggerAutoDraw(count) {
   isAnimating = true
   const drawPile = $('draw-pile')
@@ -359,11 +428,11 @@ function triggerAutoDraw(count) {
   showTurnNotif(`Берёшь ${count} карт${count > 1 ? 'ы' : 'у'}!`)
 
   const handContainer = $('player-hand')
-  const drawPileRect = drawPile ? drawPile.getBoundingClientRect() : { left: 0, top: 0 }
+  const drawRect = drawPile ? drawPile.getBoundingClientRect() : { left: 0, top: 0 }
   const handRect = handContainer ? handContainer.getBoundingClientRect() : { left: 0, top: 0 }
 
-  const fromX = drawPileRect.left + drawPileRect.width / 2
-  const fromY = drawPileRect.top + drawPileRect.height / 2
+  const fromX = drawRect.left + drawRect.width / 2
+  const fromY = drawRect.top + drawRect.height / 2
   const toX = handRect.left + handRect.width / 2
   const toY = handRect.top
 
@@ -371,35 +440,29 @@ function triggerAutoDraw(count) {
   overlay.className = 'draw-animation-overlay'
   document.body.appendChild(overlay)
 
-  const cards = []
   for (let i = 0; i < count; i++) {
     setTimeout(() => {
       const fly = document.createElement('div')
       fly.className = 'draw-animation-card'
-      const dx = toX - fromX
-      const dy = toY - fromY
-      const rot = -20 + Math.random() * 40
-      fly.style.setProperty('--target-x', `${dx + (Math.random() - 0.5) * 60}px`)
-      fly.style.setProperty('--target-y', `${dy - 20}px`)
+      fly.style.setProperty('--target-x', `${toX - fromX + (Math.random() - 0.5) * 60}px`)
+      fly.style.setProperty('--target-y', `${toY - fromY - 20}px`)
       fly.style.animationDuration = '0.5s'
-      fly.style.animationDelay = '0s'
       fly.style.left = `${fromX - 35}px`
       fly.style.top = `${fromY - 52}px`
-      fly.style.transform = `rotate(${rot}deg)`
+      fly.style.transform = `rotate(${-20 + Math.random() * 40}deg)`
       fly.textContent = 'UNO'
       overlay.appendChild(fly)
-      cards.push(fly)
     }, i * 150)
   }
 
-  const lastDelay = (count - 1) * 150
   setTimeout(() => {
-    socket.emit('draw_card', {}, (res) => {
+    socket.emit('draw_card', () => {
       overlay.remove()
       if (drawPile) drawPile.classList.remove('pulse')
       isAnimating = false
+      if (window._lastGameState) renderGame(window._lastGameState)
     })
-  }, lastDelay + 600)
+  }, (count - 1) * 150 + 600)
 }
 
 function renderHand() {
@@ -408,6 +471,7 @@ function renderHand() {
   container.innerHTML = ''
   state.hand.forEach((card, i) => {
     const el = createCardEl(card)
+    el.style.animationDelay = `${i * 0.03}s`
     const idx = i
     el.addEventListener('click', () => onCardClick(idx))
     container.appendChild(el)
@@ -434,19 +498,18 @@ function showPlayCardAnimation(index) {
   clone.style.height = `${cardRect.height}px`
   clone.style.zIndex = '90'
   clone.style.pointerEvents = 'none'
-  clone.style.transition = 'all 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55)'
+  clone.style.transition = 'all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)'
   document.body.appendChild(clone)
-
   cardEl.style.visibility = 'hidden'
 
   requestAnimationFrame(() => {
     clone.style.left = `${discardRect.left + discardRect.width / 2 - cardRect.width / 2}px`
     clone.style.top = `${discardRect.top + discardRect.height / 2 - cardRect.height / 2}px`
-    clone.style.transform = 'scale(0.8) rotate(5deg)'
-    clone.style.opacity = '0.8'
+    clone.style.transform = 'scale(0.7) rotate(8deg)'
+    clone.style.opacity = '0.5'
   })
 
-  setTimeout(() => clone.remove(), 500)
+  setTimeout(() => clone.remove(), 400)
 }
 
 function onCardClick(index) {
@@ -458,6 +521,11 @@ function onCardClick(index) {
   if (card.color === 'wild') {
     pendingWildCard = index
     const modal = $('color-picker-modal')
+    const choices = modal ? modal.querySelectorAll('.color-choice') : []
+    choices.forEach(el => {
+      el.style.boxShadow = 'none'
+      el.style.transform = 'scale(1)'
+    })
     if (modal) modal.classList.remove('hidden')
     return
   }
@@ -472,7 +540,11 @@ document.querySelectorAll('.color-choice').forEach(el => {
   el.addEventListener('click', () => {
     const color = el.dataset.color
     const modal = $('color-picker-modal')
-    if (modal) modal.classList.add('hidden')
+    if (modal) {
+      modal.classList.add('hidden')
+      modal.style.animation = 'fadeIn 0.15s ease reverse'
+      setTimeout(() => { modal.style.animation = '' }, 200)
+    }
     if (pendingWildCard !== null) {
       showPlayCardAnimation(pendingWildCard)
       socket.emit('play_card', { cardIndex: pendingWildCard, chosenColor: color }, (res) => {
@@ -486,11 +558,7 @@ document.querySelectorAll('.color-choice').forEach(el => {
 $('draw-pile').addEventListener('click', () => {
   const gs = window._lastGameState
   if (!gs || gs.currentPlayerIndex !== myPlayerIndex || !state.inGame || isAnimating) return
-  if (gs.pendingDraw && gs.pendingDraw > 0) {
-    triggerAutoDraw(gs.pendingDraw)
-  } else {
-    triggerAutoDraw(1)
-  }
+  triggerAutoDraw(gs.pendingDraw || 1)
 })
 
 $('uno-btn').addEventListener('click', () => {
@@ -503,6 +571,7 @@ function showTurnNotif(text) {
   const el = $('turn-notification')
   if (!el) return
   el.textContent = text
+  el.style.background = ''
   el.classList.remove('hidden')
   el.style.animation = 'none'
   void el.offsetHeight
@@ -514,35 +583,44 @@ function spawnConfetti() {
   const container = document.createElement('div')
   container.className = 'confetti-container'
   document.body.appendChild(container)
-
-  const colors = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22', '#1abc9c']
-  for (let i = 0; i < 80; i++) {
+  const colors = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#fff']
+  for (let i = 0; i < 120; i++) {
     const piece = document.createElement('div')
     piece.className = 'confetti'
     piece.style.left = `${Math.random() * 100}%`
     piece.style.background = colors[Math.floor(Math.random() * colors.length)]
-    piece.style.width = `${5 + Math.random() * 10}px`
-    piece.style.height = `${5 + Math.random() * 10}px`
+    piece.style.width = `${4 + Math.random() * 12}px`
+    piece.style.height = `${4 + Math.random() * 12}px`
     piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px'
-    piece.style.setProperty('--fall-duration', `${2 + Math.random() * 3}s`)
+    piece.style.setProperty('--fall-duration', `${2 + Math.random() * 4}s`)
     piece.style.setProperty('--fall-delay', `${Math.random() * 2}s`)
-    piece.style.setProperty('--fall-rotation', `${Math.random() * 720}deg`)
+    piece.style.setProperty('--fall-rotation', `${Math.random() * 1080}deg`)
     container.appendChild(piece)
   }
-
-  setTimeout(() => container.remove(), 6000)
+  setTimeout(() => container.remove(), 7000)
 }
 
-// Socket events
+function showGameOver(data) {
+  const winner = data && data.winner ? data.winner : (data && data.reason === 'all_left' ? 'Ничья' : null)
+  if (!winner) {
+    showError('Игра прервана')
+    leaveRoom()
+    return
+  }
+  $('winner-text').textContent = `Победил: ${winner}! 🎉`
+  $('game-over-modal').classList.remove('hidden')
+  state.inGame = false
+  spawnConfetti()
+}
+
+// === Socket events ===
 socket.on('room_update', (gs) => {
   if (!gs) return
-  const waiting = $('waiting-view')
-  const game = $('game-view')
   window._lastGameState = gs
-  if (waiting && waiting.classList.contains('active')) {
+  if ($('waiting-view') && $('waiting-view').classList.contains('active')) {
     updatePlayersList(gs.players)
   }
-  if (game && game.classList.contains('active') && !isAnimating) {
+  if ($('game-view') && $('game-view').classList.contains('active') && !isAnimating) {
     renderGame(gs)
   }
 })
@@ -556,22 +634,38 @@ socket.on('game_start', (data) => {
 socket.on('hand_update', (data) => {
   if (!data) return
   state.hand = data.hand || []
-  const game = $('game-view')
-  if (game && game.classList.contains('active')) {
+  if ($('game-view') && $('game-view').classList.contains('active')) {
     renderHand()
   }
 })
 
 socket.on('game_over', (data) => {
   if (!data) return
-  $('winner-text').textContent = `Победил: ${data.winner}! 🎉`
-  $('game-over-modal').classList.remove('hidden')
-  state.inGame = false
-  spawnConfetti()
+  showGameOver(data)
 })
 
 socket.on('player_left', (data) => {
+  if (!data) return
   if (state.inGame) {
-    showError(`Игрок ${data.name || ''} отключился`)
+    const msg = `Игрок ${data.name || '—'} отключился`
+    showError(msg)
+    if (data.newHost) {
+      setTimeout(() => showError(`Новый хост: ${data.newHost}`), 1000)
+    }
+    if (data.playerCount === 1) {
+      setTimeout(() => showGameOver({ winner: state.name, reason: 'won' }), 1500)
+    }
+  }
+})
+
+socket.on('settings_updated', (data) => {
+  if (!data) return
+  window._lastSettings = data.settings
+  if ($('waiting-view') && $('waiting-view').classList.contains('active')) {
+    const modeBtns = document.querySelectorAll('#waiting-view .mode-btn')
+    modeBtns.forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === data.mode)
+    })
+    selectedMode = data.mode
   }
 })
