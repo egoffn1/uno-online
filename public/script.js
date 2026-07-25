@@ -76,8 +76,11 @@ function startReconnectCountdown() {
 const socket = io({
   reconnection: true,
   reconnectionAttempts: Infinity,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000
+  reconnectionDelay: 500,
+  reconnectionDelayMax: 3000,
+  randomizationFactor: 0.3,
+  timeout: 10000,
+  transports: ['websocket', 'polling']
 })
 
 function showView(name) {

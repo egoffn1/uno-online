@@ -2,21 +2,35 @@ const express = require('express')
 const http = require('http')
 const { Server } = require('socket.io')
 const path = require('path')
+const compression = require('compression')
 const engine = require('./game-engine')
 
 const app = express()
 const server = http.createServer(app)
-const io = new Server(server, { cors: { origin: '*' } })
 
+app.use(compression())
 app.get('/room/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'))
 })
 app.use(express.static(path.join(__dirname, 'public')))
 
+const io = new Server(server, {
+  cors: { origin: '*' },
+  transports: ['websocket', 'polling'],
+  pingInterval: 10000,
+  pingTimeout: 5000,
+  upgradeTimeout: 3000,
+  allowUpgrades: true,
+  httpCompression: true,
+  connectTimeout: 10000,
+  perMessageDeflate: {
+    threshold: 512
+  }
+})
+
 const rooms = new Map()
 const socketToRoom = new Map()
 const botTimers = new Map()
-const disconnectTimers = new Map()
 const DISCONNECT_GRACE = 5000
 
 function getRoomState(room) {
@@ -32,7 +46,7 @@ function getRoomState(room) {
       isHost: p.isHost,
       isBot: p.isBot,
       disconnected: p.disconnected || false,
-      cardsCount: p.hand.length,
+      cardsCount: p.hand ? p.hand.length : 0,
       calledUno: p.calledUno
     })),
     pendingPlayers: room.pendingPlayers.map(p => ({ id: p.id, name: p.name })),
@@ -62,12 +76,24 @@ function getPublicRoomList() {
   return list
 }
 
+function clearBotTimer(room) {
+  if (!room) return
+  const key = room.id
+  const timers = botTimers.get(key)
+  if (timers) {
+    timers.forEach(t => clearTimeout(t))
+    botTimers.delete(key)
+  }
+}
+
 function scheduleBotMove(room) {
+  clearBotTimer(room)
   if (!room || room.phase !== 'playing') return
+
   const player = room.players[room.currentPlayerIndex]
   if (!player || !player.isBot || player.disconnected) return
 
-  const delay = 800 + Math.random() * 700
+  const delay = 600 + Math.random() * 600
   const timer = setTimeout(() => {
     if (!room || room.phase !== 'playing') return
     const botPlayer = room.players[room.currentPlayerIndex]
@@ -105,37 +131,42 @@ function scheduleBotMove(room) {
   botTimers.get(key).push(timer)
 }
 
-function clearBotTimer(room) {
-  if (!room) return
-  const key = room.id
-  const timers = botTimers.get(key)
-  if (timers) {
-    timers.forEach(t => clearTimeout(t))
-    botTimers.delete(key)
-  }
-}
-
 function broadcastRoomState(room) {
   io.to(room.id).emit('room_update', getRoomState(room))
   room.players.forEach(p => {
-    if (!p.isBot && !p.disconnected) io.to(p.id).emit('hand_update', { hand: p.hand })
+    if (!p.isBot && !p.disconnected) {
+      io.to(p.id).emit('hand_update', { hand: p.hand })
+    }
   })
 }
 
-function kickPlayer(room, socketId) {
-  const player = room.players.find(p => p.id === socketId)
+function assignNewHost(room) {
+  const newHost = room.players.find(p => !p.isBot && !p.disconnected)
+  if (newHost) {
+    newHost.isHost = true
+    return newHost
+  }
+  const anyPlayer = room.players.find(p => !p.isBot)
+  if (anyPlayer) {
+    anyPlayer.isHost = true
+    return anyPlayer
+  }
+  return null
+}
+
+function kickPlayer(room, playerId) {
+  const player = room.players.find(p => p.id === playerId)
   if (!player) return
 
   const playerName = player.name
   const wasHost = player.isHost
   const wasPlaying = room.phase === 'playing'
 
-  socketToRoom.delete(socketId)
-  const removed = engine.removePlayer(room, socketId)
+  socketToRoom.delete(playerId)
+  const removed = engine.removePlayer(room, playerId)
   if (!removed) return
 
-  const isBotRoom = room.players.some(p => p.isBot)
-  if (isBotRoom || room.players.length === 0) {
+  if (room.players.length === 0) {
     clearBotTimer(room)
     rooms.delete(room.id)
     return
@@ -144,24 +175,26 @@ function kickPlayer(room, socketId) {
   broadcastRoomState(room)
 
   if (wasPlaying) {
-    const newHost = wasHost && room.players.length > 0 ? room.players[0] : null
+    const newHost = wasHost ? assignNewHost(room) : null
     io.to(room.id).emit('player_left', {
       name: playerName,
       newHost: newHost ? newHost.name : null,
       playerCount: room.players.length,
       wasKicked: true
     })
-    if (newHost) broadcastRoomState(room)
     if (room.phase === 'ended') {
       if (room.winner) io.to(room.id).emit('game_over', { winner: room.winner, reason: 'disconnect' })
+    } else if (newHost) {
+      broadcastRoomState(room)
     }
-  }
-}
-
-function cancelDisconnectTimer(player) {
-  if (player._disconnectTimer) {
-    clearTimeout(player._disconnectTimer)
-    player._disconnectTimer = null
+  } else {
+    if (wasHost) {
+      const newHost = assignNewHost(room)
+      if (newHost) {
+        broadcastRoomState(room)
+        io.to(room.id).emit('host_changed', { newHost: newHost.name })
+      }
+    }
   }
 }
 
@@ -174,13 +207,10 @@ function markDisconnected(socket) {
   const player = room.players.find(p => p.id === socket.id)
   if (!player) return
 
-  const isBotRoom = room.players.some(p => p.isBot)
-  if (isBotRoom) {
-    room.players = room.players.filter(p => !p.isBot)
-    if (room.players.length === 0) { rooms.delete(roomId); return }
+  if (player._disconnectTimer) {
+    clearTimeout(player._disconnectTimer)
   }
 
-  cancelDisconnectTimer(player)
   player.disconnected = true
   socketToRoom.delete(socket.id)
 
@@ -192,42 +222,43 @@ function markDisconnected(socket) {
 
   player._disconnectTimer = setTimeout(() => {
     kickPlayer(room, player.id)
-    cancelDisconnectTimer(player)
+    player._disconnectTimer = null
   }, DISCONNECT_GRACE)
 }
 
-function handleRejoin(socket, roomId, name, callback) {
-  const room = rooms.get(roomId)
-  if (!room) return callback({ error: 'Комната не найдена' })
+function tryRejoin(socket, roomId, name) {
+  return new Promise((resolve) => {
+    const room = rooms.get(roomId)
+    if (!room) return resolve(null)
 
-  let player = room.players.find(p => p.id === socket.id)
-  if (!player) {
-    player = room.players.find(p => p.name === name.trim() && p.disconnected)
-  }
-  if (!player) return callback({ error: 'Не в этой комнате' })
+    let player = room.players.find(p => p.id === socket.id)
+    if (!player) {
+      player = room.players.find(p => p.name === name && p.disconnected)
+    }
+    if (!player) return resolve(null)
 
-  const oldId = player.id
-  player.id = socket.id
-  cancelDisconnectTimer(player)
-  player.disconnected = false
-
-  if (oldId !== socket.id) {
+    const oldId = player.id
+    player.id = socket.id
     socketToRoom.delete(oldId)
-  }
-  socketToRoom.set(socket.id, room.id)
-  player.name = name.trim() || player.name
-  socket.join(roomId)
+    socketToRoom.set(socket.id, room.id)
 
-  const hands = {}
-  room.players.forEach(p => { hands[p.id] = p.hand })
-  callback({ state: getRoomState(room), hands })
-  io.to(roomId).emit('player_reconnected', { name: player.name })
-  io.to(roomId).emit('room_update', getRoomState(room))
-  room.players.forEach(p => {
-    if (!p.isBot && !p.disconnected) io.to(p.id).emit('hand_update', { hand: p.hand })
+    if (player._disconnectTimer) {
+      clearTimeout(player._disconnectTimer)
+      player._disconnectTimer = null
+    }
+    player.disconnected = false
+    player.name = name
+    socket.join(roomId)
+
+    const hands = {}
+    room.players.forEach(p => { hands[p.id] = p.hand })
+
+    io.to(roomId).emit('player_reconnected', { name: player.name })
+    broadcastRoomState(room)
+
+    scheduleBotMove(room)
+    resolve(getRoomState(room))
   })
-
-  scheduleBotMove(room)
 }
 
 io.on('connection', (socket) => {
@@ -274,17 +305,13 @@ io.on('connection', (socket) => {
     if (room.players.length >= 10) return callback({ error: 'Комната полна' })
 
     if (room.type === 'private') {
-      const existing = room.pendingPlayers.find(p => p.id === socket.id)
-      if (existing) return callback({ error: 'Запрос уже отправлен' })
-
+      if (room.pendingPlayers.find(p => p.id === socket.id)) {
+        return callback({ error: 'Запрос уже отправлен' })
+      }
       room.pendingPlayers.push({ id: socket.id, name: name.trim() })
       socketToRoom.set(socket.id, room.id)
-
       const host = room.players.find(p => p.isHost)
-      if (host) {
-        io.to(host.id).emit('join_request', { playerId: socket.id, name: name.trim() })
-      }
-
+      if (host) io.to(host.id).emit('join_request', { playerId: socket.id, name: name.trim() })
       callback({ pending: true })
       return
     }
@@ -304,9 +331,9 @@ io.on('connection', (socket) => {
     const player = room.players.find(p => p.id === socket.id)
     if (!player || !player.isHost) return callback({ error: 'Только хост' })
 
-    const pendingIdx = room.pendingPlayers.findIndex(p => p.id === playerId)
-    if (pendingIdx === -1) return callback({ error: 'Запрос не найден' })
-    const pending = room.pendingPlayers.splice(pendingIdx, 1)[0]
+    const idx = room.pendingPlayers.findIndex(p => p.id === playerId)
+    if (idx === -1) return callback({ error: 'Запрос не найден' })
+    const pending = room.pendingPlayers.splice(idx, 1)[0]
 
     const joinSocket = io.sockets.sockets.get(playerId)
     if (joinSocket) {
@@ -314,9 +341,8 @@ io.on('connection', (socket) => {
       joinSocket.join(roomId)
       socketToRoom.set(playerId, roomId)
       io.to(playerId).emit('join_approved', { state: getRoomState(room) })
-      io.to(roomId).emit('room_update', getRoomState(room))
+      broadcastRoomState(room)
     }
-
     callback({ success: true })
   })
 
@@ -328,21 +354,27 @@ io.on('connection', (socket) => {
     const player = room.players.find(p => p.id === socket.id)
     if (!player || !player.isHost) return callback({ error: 'Только хост' })
 
-    const pendingIdx = room.pendingPlayers.findIndex(p => p.id === playerId)
-    if (pendingIdx === -1) return callback({ error: 'Запрос не найден' })
-    const pending = room.pendingPlayers.splice(pendingIdx, 1)[0]
+    const idx = room.pendingPlayers.findIndex(p => p.id === playerId)
+    if (idx === -1) return callback({ error: 'Запрос не найден' })
+    const pending = room.pendingPlayers.splice(idx, 1)[0]
 
+    socketToRoom.delete(playerId)
     const joinSocket = io.sockets.sockets.get(playerId)
-    if (joinSocket) {
-      socketToRoom.delete(playerId)
-      io.to(playerId).emit('join_rejected', { reason: 'Хост отклонил запрос' })
-    }
-
+    if (joinSocket) io.to(playerId).emit('join_rejected', { reason: 'Хост отклонил запрос' })
     callback({ success: true })
   })
 
   socket.on('rejoin', ({ roomId, name }, callback) => {
-    handleRejoin(socket, roomId, name, callback)
+    tryRejoin(socket, roomId, name).then(state => {
+      if (state) {
+        const hands = {}
+        const room = rooms.get(roomId)
+        if (room) room.players.forEach(p => { hands[p.id] = p.hand })
+        callback({ state, hands })
+      } else {
+        callback({ error: 'Не в этой комнате' })
+      }
+    })
   })
 
   socket.on('update_settings', ({ mode, settings }, callback) => {
@@ -351,12 +383,12 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
     const player = room.players.find(p => p.id === socket.id)
-    if (!player || !player.isHost) return callback({ error: 'Только хост может менять настройки' })
+    if (!player || !player.isHost) return callback({ error: 'Только хост' })
 
-    const newSettings = engine.updateSettings(room, mode, settings)
-    io.to(roomId).emit('settings_updated', { mode: room.mode, settings: newSettings })
-    io.to(roomId).emit('room_update', getRoomState(room))
-    callback({ success: true, mode: room.mode, settings: newSettings })
+    engine.updateSettings(room, mode, settings)
+    io.to(roomId).emit('settings_updated', { mode: room.mode, settings: room.settings })
+    broadcastRoomState(room)
+    callback({ success: true, mode: room.mode, settings: room.settings })
   })
 
   socket.on('start_game', (_, callback) => {
@@ -365,7 +397,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
     const player = room.players.find(p => p.id === socket.id)
-    if (!player || !player.isHost) return callback({ error: 'Только хост может начать' })
+    if (!player || !player.isHost) return callback({ error: 'Только хост' })
     if (room.players.length < 2) return callback({ error: 'Нужно минимум 2 игрока' })
 
     const result = engine.startGame(room)
@@ -375,7 +407,6 @@ io.on('connection', (socket) => {
     room.players.forEach(p => { hands[p.id] = p.hand })
     io.to(roomId).emit('game_start', { state: getRoomState(room), hands })
     callback({ success: true })
-
     scheduleBotMove(room)
   })
 
@@ -384,14 +415,13 @@ io.on('connection', (socket) => {
     if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
-    const playerIndex = room.players.findIndex(p => p.id === socket.id)
-    if (playerIndex === -1) return callback({ error: 'Не в игре' })
+    const pi = room.players.findIndex(p => p.id === socket.id)
+    if (pi === -1) return callback({ error: 'Не в игре' })
 
-    const result = engine.playCard(room, playerIndex, cardIndex, chosenColor)
+    const result = engine.playCard(room, pi, cardIndex, chosenColor)
     if (result.error) return callback({ error: result.error })
 
     broadcastRoomState(room)
-
     if (result.winner) {
       io.to(roomId).emit('game_over', { winner: result.winner })
       clearBotTimer(room)
@@ -406,10 +436,10 @@ io.on('connection', (socket) => {
     if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
-    const playerIndex = room.players.findIndex(p => p.id === socket.id)
-    if (playerIndex === -1) return callback({ error: 'Не в игре' })
+    const pi = room.players.findIndex(p => p.id === socket.id)
+    if (pi === -1) return callback({ error: 'Не в игре' })
 
-    const result = engine.drawAction(room, playerIndex)
+    const result = engine.drawAction(room, pi)
     if (result.error) return callback({ error: result.error })
 
     broadcastRoomState(room)
@@ -422,12 +452,12 @@ io.on('connection', (socket) => {
     if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
     if (!room) return callback({ error: 'Комната не найдена' })
-    const playerIndex = room.players.findIndex(p => p.id === socket.id)
-    if (playerIndex === -1) return callback({ error: 'Не в игре' })
+    const pi = room.players.findIndex(p => p.id === socket.id)
+    if (pi === -1) return callback({ error: 'Не в игре' })
 
-    const result = engine.callUno(room, playerIndex)
+    const result = engine.callUno(room, pi)
     if (result.error) return callback({ error: result.error })
-    io.to(roomId).emit('uno_called', { player: room.players[playerIndex].name })
+    io.to(roomId).emit('uno_called', { player: room.players[pi].name })
     callback({ success: true })
   })
 
