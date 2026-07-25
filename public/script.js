@@ -7,6 +7,32 @@ let isAnimating = false
 let selectedMode = 'classic'
 let isPendingApproval = false
 
+function navigateTo(path) {
+  if (window.location.pathname !== path) {
+    history.pushState(null, '', path)
+  }
+}
+
+function navigateToRoom(roomId) {
+  navigateTo(`/room/${roomId}`)
+}
+
+function navigateToLobby() {
+  navigateTo('/')
+}
+
+window.addEventListener('popstate', () => {
+  const path = window.location.pathname
+  const match = path.match(/^\/room\/(\w+)$/)
+  if (!match && (state.roomId || isPendingApproval)) {
+    leaveRoom()
+  }
+})
+
+const initialPath = window.location.pathname
+const initialRoomMatch = initialPath.match(/^\/room\/(\w+)$/)
+let initialRoomId = initialRoomMatch ? initialRoomMatch[1] : null
+
 const socket = io({
   reconnection: true,
   reconnectionAttempts: Infinity,
@@ -247,7 +273,7 @@ $('pending-cancel-btn').addEventListener('click', () => {
 })
 
 const urlParams = new URLSearchParams(window.location.search)
-const inviteRoom = urlParams.get('room')
+const inviteRoom = urlParams.get('room') || initialRoomId
 if (inviteRoom) {
   $('room-input').value = inviteRoom
   const info = $('invite-info')
@@ -296,6 +322,7 @@ $('settings-cancel-btn').addEventListener('click', () => {
 
 // === Waiting room ===
 function enterWaiting(roomState) {
+  navigateToRoom(roomState.id)
   showView('waiting-view')
   $('room-code').textContent = roomState.id
   $('game-room-code').textContent = roomState.id
@@ -419,6 +446,7 @@ function leaveRoom() {
   isPendingApproval = false
   $('create-btn') && ($('create-btn').disabled = false)
   $('join-btn').disabled = false
+  navigateToLobby()
   showView('lobby-view')
   refreshPublicRooms()
 }
@@ -432,6 +460,7 @@ $('back-to-lobby-btn').addEventListener('click', () => {
 
 // === Game ===
 function enterGame(gameState, hands) {
+  navigateToRoom(gameState.id)
   state.inGame = true
   state.hand = hands && hands[socket.id] ? hands[socket.id] : []
   myPlayerIndex = -1
