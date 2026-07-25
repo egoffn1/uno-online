@@ -6,7 +6,7 @@ const engine = require('./game-engine')
 
 const app = express()
 const server = http.createServer(app)
-const io = new Server(server)
+const io = new Server(server, { cors: { origin: '*' } })
 
 app.use(express.static(path.join(__dirname, 'public')))
 
@@ -30,19 +30,38 @@ function getRoomState(room) {
     winner: room.winner,
     discardTop: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null,
     currentColor: room.currentColor,
-    currentValue: room.currentValue
+    currentValue: room.currentValue,
+    pendingDraw: room.pendingDraw
   }
 }
 
-function getPlayerHand(room, socketId) {
-  const player = room.players.find(p => p.id === socketId)
-  return player ? player.hand : []
+function disconnectPlayer(socket) {
+  const roomId = socketToRoom.get(socket.id)
+  if (!roomId) return
+  const room = rooms.get(roomId)
+  if (!room) return
+
+  const player = room.players.find(p => p.id === socket.id)
+  const playerName = player ? player.name : ''
+
+  engine.removePlayer(room, socket.id)
+  socketToRoom.delete(socket.id)
+  socket.leave(roomId)
+
+  if (room.players.length === 0) {
+    rooms.delete(roomId)
+  } else {
+    io.to(roomId).emit('room_update', getRoomState(room))
+    if (room.phase === 'playing') {
+      io.to(roomId).emit('player_left', { id: socket.id, name: playerName })
+    }
+  }
 }
 
 io.on('connection', (socket) => {
   socket.on('create_room', ({ name }, callback) => {
     if (!name || name.trim().length === 0) {
-      return callback({ error: 'Name is required' })
+      return callback({ error: 'Введи имя' })
     }
     const room = engine.createRoom(name.trim())
     engine.addPlayer(room, socket.id, name.trim())
@@ -54,12 +73,12 @@ io.on('connection', (socket) => {
 
   socket.on('join_room', ({ roomId, name }, callback) => {
     if (!name || name.trim().length === 0) {
-      return callback({ error: 'Name is required' })
+      return callback({ error: 'Введи имя' })
     }
     const room = rooms.get(roomId)
-    if (!room) return callback({ error: 'Room not found' })
-    if (room.phase !== 'waiting') return callback({ error: 'Game already started' })
-    if (room.players.length >= 10) return callback({ error: 'Room is full' })
+    if (!room) return callback({ error: 'Комната не найдена' })
+    if (room.phase !== 'waiting') return callback({ error: 'Игра уже началась' })
+    if (room.players.length >= 10) return callback({ error: 'Комната полна' })
 
     engine.addPlayer(room, socket.id, name.trim())
     socketToRoom.set(socket.id, room.id)
@@ -68,30 +87,48 @@ io.on('connection', (socket) => {
     socket.to(room.id).emit('room_update', getRoomState(room))
   })
 
+  socket.on('rejoin', ({ roomId, name }, callback) => {
+    const room = rooms.get(roomId)
+    if (!room) return callback({ error: 'Комната не найдена' })
+    const oldPlayer = room.players.find(p => p.id === socket.id)
+    if (!oldPlayer) return callback({ error: 'Не в этой комнате' })
+
+    oldPlayer.name = name.trim() || oldPlayer.name
+    socketToRoom.set(socket.id, room.id)
+    socket.join(roomId)
+
+    const hands = {}
+    room.players.forEach(p => { hands[p.id] = p.hand })
+    callback({ state: getRoomState(room), hands })
+    io.to(roomId).emit('room_update', getRoomState(room))
+  })
+
   socket.on('start_game', (_, callback) => {
     const roomId = socketToRoom.get(socket.id)
-    if (!roomId) return callback({ error: 'Not in a room' })
+    if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
-    if (!room) return callback({ error: 'Room not found' })
+    if (!room) return callback({ error: 'Комната не найдена' })
     const player = room.players.find(p => p.id === socket.id)
-    if (!player || !player.isHost) return callback({ error: 'Only host can start' })
-    if (room.players.length < 2) return callback({ error: 'Need at least 2 players' })
+    if (!player || !player.isHost) return callback({ error: 'Только хост может начать' })
+    if (room.players.length < 2) return callback({ error: 'Нужно минимум 2 игрока' })
 
     engine.startGame(room)
+    const hands = {}
+    room.players.forEach(p => { hands[p.id] = p.hand })
     io.to(roomId).emit('game_start', {
       state: getRoomState(room),
-      hands: Object.fromEntries(room.players.map(p => [p.id, p.hand]))
+      hands
     })
     callback({ success: true })
   })
 
   socket.on('play_card', ({ cardIndex, chosenColor }, callback) => {
     const roomId = socketToRoom.get(socket.id)
-    if (!roomId) return callback({ error: 'Not in a room' })
+    if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
-    if (!room) return callback({ error: 'Room not found' })
+    if (!room) return callback({ error: 'Комната не найдена' })
     const playerIndex = room.players.findIndex(p => p.id === socket.id)
-    if (playerIndex === -1) return callback({ error: 'Not in game' })
+    if (playerIndex === -1) return callback({ error: 'Не в игре' })
 
     const result = engine.playCard(room, playerIndex, cardIndex, chosenColor)
     if (result.error) return callback({ error: result.error })
@@ -108,11 +145,11 @@ io.on('connection', (socket) => {
 
   socket.on('draw_card', (_, callback) => {
     const roomId = socketToRoom.get(socket.id)
-    if (!roomId) return callback({ error: 'Not in a room' })
+    if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
-    if (!room) return callback({ error: 'Room not found' })
+    if (!room) return callback({ error: 'Комната не найдена' })
     const playerIndex = room.players.findIndex(p => p.id === socket.id)
-    if (playerIndex === -1) return callback({ error: 'Not in game' })
+    if (playerIndex === -1) return callback({ error: 'Не в игре' })
 
     const result = engine.drawAction(room, playerIndex)
     if (result.error) return callback({ error: result.error })
@@ -121,36 +158,16 @@ io.on('connection', (socket) => {
     room.players.forEach(p => {
       io.to(p.id).emit('hand_update', { hand: p.hand })
     })
-    callback({ success: true, drawn: result.drawn })
-  })
-
-  socket.on('leave', () => {
-    const roomId = socketToRoom.get(socket.id)
-    if (!roomId) return
-    const room = rooms.get(roomId)
-    if (!room) return
-
-    engine.removePlayer(room, socket.id)
-    socketToRoom.delete(socket.id)
-    socket.leave(roomId)
-
-    if (room.players.length === 0) {
-      rooms.delete(roomId)
-    } else {
-      socket.to(roomId).emit('room_update', getRoomState(room))
-      if (room.phase === 'playing') {
-        io.to(roomId).emit('player_left', { id: socket.id })
-      }
-    }
+    callback({ success: true })
   })
 
   socket.on('call_uno', (_, callback) => {
     const roomId = socketToRoom.get(socket.id)
-    if (!roomId) return callback({ error: 'Not in a room' })
+    if (!roomId) return callback({ error: 'Не в комнате' })
     const room = rooms.get(roomId)
-    if (!room) return callback({ error: 'Room not found' })
+    if (!room) return callback({ error: 'Комната не найдена' })
     const playerIndex = room.players.findIndex(p => p.id === socket.id)
-    if (playerIndex === -1) return callback({ error: 'Not in game' })
+    if (playerIndex === -1) return callback({ error: 'Не в игре' })
 
     const result = engine.callUno(room, playerIndex)
     if (result.error) return callback({ error: result.error })
@@ -158,24 +175,8 @@ io.on('connection', (socket) => {
     callback({ success: true })
   })
 
-  socket.on('disconnect', () => {
-    const roomId = socketToRoom.get(socket.id)
-    if (!roomId) return
-    const room = rooms.get(roomId)
-    if (!room) return
-
-    engine.removePlayer(room, socket.id)
-    socketToRoom.delete(socket.id)
-
-    if (room.players.length === 0) {
-      rooms.delete(roomId)
-    } else {
-      socket.to(roomId).emit('room_update', getRoomState(room))
-      if (room.phase === 'playing') {
-        io.to(roomId).emit('player_left', { id: socket.id })
-      }
-    }
-  })
+  socket.on('leave', () => disconnectPlayer(socket))
+  socket.on('disconnect', () => disconnectPlayer(socket))
 })
 
 const PORT = process.env.PORT || 3000

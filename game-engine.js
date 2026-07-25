@@ -71,6 +71,14 @@ function removePlayer(room, socketId) {
   if (room.players.length > 0 && removed.isHost) {
     room.players[0].isHost = true
   }
+  if (room.phase === 'playing') {
+    if (idx < room.currentPlayerIndex) {
+      room.currentPlayerIndex--
+    }
+    if (room.currentPlayerIndex >= room.players.length) {
+      room.currentPlayerIndex = 0
+    }
+  }
   return removed
 }
 
@@ -142,15 +150,16 @@ function canPlayCard(card, currentColor, currentValue) {
 
 function playCard(room, playerIndex, cardIndex, chosenColor) {
   const player = room.players[playerIndex]
-  if (!player) return { error: 'Player not found' }
-  if (room.phase !== 'playing') return { error: 'Game not in progress' }
-  if (room.currentPlayerIndex !== playerIndex) return { error: 'Not your turn' }
+  if (!player) return { error: 'Игрок не найден' }
+  if (room.phase !== 'playing') return { error: 'Игра не начата' }
+  if (room.currentPlayerIndex !== playerIndex) return { error: 'Не твой ход' }
+  if (room.pendingDraw > 0) return { error: 'Сначала возьми карты' }
 
   const card = player.hand[cardIndex]
-  if (!card) return { error: 'Card not found' }
+  if (!card) return { error: 'Карта не найдена' }
 
   if (!canPlayCard(card, room.currentColor, room.currentValue)) {
-    return { error: 'Cannot play this card' }
+    return { error: 'Нельзя сыграть эту карту' }
   }
 
   player.hand.splice(cardIndex, 1)
@@ -158,7 +167,7 @@ function playCard(room, playerIndex, cardIndex, chosenColor) {
 
   if (card.color === 'wild') {
     if (!chosenColor || !COLORS.includes(chosenColor)) {
-      return { error: 'Must choose a color for wild card' }
+      return { error: 'Выбери цвет' }
     }
     room.currentColor = chosenColor
     room.currentValue = card.value
@@ -193,9 +202,9 @@ function playCard(room, playerIndex, cardIndex, chosenColor) {
 
 function drawAction(room, playerIndex) {
   const player = room.players[playerIndex]
-  if (!player) return { error: 'Player not found' }
-  if (room.phase !== 'playing') return { error: 'Game not in progress' }
-  if (room.currentPlayerIndex !== playerIndex) return { error: 'Not your turn' }
+  if (!player) return { error: 'Игрок не найден' }
+  if (room.phase !== 'playing') return { error: 'Игра не начата' }
+  if (room.currentPlayerIndex !== playerIndex) return { error: 'Не твой ход' }
 
   let count = room.pendingDraw > 0 ? room.pendingDraw : 1
   room.pendingDraw = 0
@@ -214,23 +223,23 @@ function advanceTurn(room) {
 
 function callUno(room, playerIndex) {
   const player = room.players[playerIndex]
-  if (!player) return { error: 'Player not found' }
+  if (!player) return { error: 'Игрок не найден' }
   if (player.hand.length === 1) {
     player.calledUno = true
     return { success: true }
   }
-  return { error: 'Cannot call UNO now' }
+  return { error: 'Нельзя крикнуть UNO сейчас' }
 }
 
 function catchUno(room, callerIndex, targetIndex) {
   const target = room.players[targetIndex]
-  if (!target) return { error: 'Target not found' }
+  if (!target) return { error: 'Игрок не найден' }
   if (target.hand.length === 1 && !target.calledUno) {
     const penalty = drawCards(room, 2)
     target.hand.push(...penalty)
     return { success: true, penalty: 2 }
   }
-  return { error: 'No UNO to catch' }
+  return { error: 'Нечего ловить' }
 }
 
 module.exports = {

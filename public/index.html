@@ -22,6 +22,7 @@
         </div>
       </div>
       <div id="error-msg" class="error hidden"></div>
+      <div id="invite-info" class="invite-info hidden"></div>
     </div>
   </div>
 
@@ -58,7 +59,7 @@
         <div class="discard-area">
           <div id="discard-pile" class="discard-pile"></div>
           <div id="draw-pile" class="draw-pile" title="Взять карту">
-            <div class="card card-back">UNO</div>
+            <div class="card card-back"><div class="card-pattern"></div></div>
           </div>
         </div>
       </div>
@@ -72,6 +73,8 @@
       </div>
     </div>
   </div>
+
+  <div id="game-error" class="error hidden" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:50;max-width:90%"></div>
 
   <div id="color-picker-modal" class="modal hidden">
     <div class="modal-content">
