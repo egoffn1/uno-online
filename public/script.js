@@ -166,8 +166,6 @@ socket.on('connect', () => {
     })
   }
 })
-  }
-})
 
 socket.on('disconnect', () => {
   setConnStatus(false, 'Reconnecting...')
