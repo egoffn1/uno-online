@@ -196,6 +196,15 @@
   </div>
 
   <div id="turn-notification" class="turn-notification hidden"></div>
+
+  <div id="reconnect-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>⚠️ Отключение</h2>
+      <p id="reconnect-text">Потеря связи...</p>
+      <div id="reconnect-countdown" class="reconnect-countdown">5</div>
+      <p style="font-size:13px;color:var(--text-muted);margin-top:8px">Вернись чтобы продолжить игру</p>
+    </div>
+  </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>

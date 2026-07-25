@@ -1150,6 +1150,15 @@ input::placeholder { color: var(--text-muted); }
   pointer-events: none;
 }
 
+/* === RECONNECT MODAL === */
+.reconnect-countdown {
+  font-size: 72px;
+  font-weight: 900;
+  color: var(--accent);
+  margin: 16px 0;
+  animation: pulse 1s var(--ease-in-out) infinite;
+}
+
 /* === RESPONSIVE === */
 @media (max-width: 600px) {
   .logo { font-size: 64px; letter-spacing: 8px; }

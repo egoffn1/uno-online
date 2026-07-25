@@ -33,6 +33,46 @@ const initialPath = window.location.pathname
 const initialRoomMatch = initialPath.match(/^\/room\/(\w+)$/)
 let initialRoomId = initialRoomMatch ? initialRoomMatch[1] : null
 
+let reconnectTimer = null
+let reconnectCount = 0
+
+function showReconnectModal(count) {
+  const modal = $('reconnect-modal')
+  const text = $('reconnect-text')
+  const cd = $('reconnect-countdown')
+  if (!modal || !cd) return
+  cd.textContent = String(count)
+  if (text) text.textContent = 'Потеря связи...'
+  modal.classList.remove('hidden')
+}
+
+function hideReconnectModal() {
+  const modal = $('reconnect-modal')
+  if (modal) modal.classList.add('hidden')
+  if (reconnectTimer) { clearInterval(reconnectTimer); reconnectTimer = null }
+}
+
+function startReconnectCountdown() {
+  reconnectCount = 5
+  showReconnectModal(reconnectCount)
+  if (reconnectTimer) clearInterval(reconnectTimer)
+  reconnectTimer = setInterval(() => {
+    reconnectCount--
+    if (reconnectCount <= 0) {
+      clearInterval(reconnectTimer)
+      reconnectTimer = null
+      hideReconnectModal()
+      if (state.inGame) {
+        showError('Ты был кикнут из игры')
+        leaveRoom()
+      }
+      return
+    }
+    const cd = $('reconnect-countdown')
+    if (cd) cd.textContent = String(reconnectCount)
+  }, 1000)
+}
+
 const socket = io({
   reconnection: true,
   reconnectionAttempts: Infinity,
@@ -109,21 +149,30 @@ setConnStatus(false, 'Connecting...')
 socket.on('connect', () => {
   setConnStatus(true, 'Connected')
   hideError()
-  refreshPublicRooms()
   if (state.roomId && state.name) {
     socket.emit('rejoin', { roomId: state.roomId, name: state.name }, (res) => {
       if (res && res.state) {
+        hideReconnectModal()
         if (res.state.phase === 'playing') {
           enterGame(res.state, res.hands)
         } else {
           enterWaiting(res.state)
         }
+      } else if (res && res.error) {
+        hideReconnectModal()
+        showError('Не удалось переподключиться')
+        leaveRoom()
       }
     })
   }
 })
+  }
+})
 
-socket.on('disconnect', () => setConnStatus(false, 'Reconnecting...'))
+socket.on('disconnect', () => {
+  setConnStatus(false, 'Reconnecting...')
+  if (state.inGame || state.roomId) startReconnectCountdown()
+})
 socket.on('connect_error', () => setConnStatus(false, 'Connection error'))
 
 function showError(msg) {
@@ -793,14 +842,32 @@ socket.on('game_over', (data) => {
 socket.on('player_left', (data) => {
   if (!data) return
   if (state.inGame) {
-    const msg = data.name ? `Игрок ${data.name} отключился` : 'Игрок отключился'
-    showError(msg)
+    if (data.wasKicked) {
+      showError(`Игрок ${data.name || '—'} был кикнут`)
+    } else {
+      const msg = data.name ? `Игрок ${data.name} отключился` : 'Игрок отключился'
+      showError(msg)
+    }
     if (data.newHost) {
       setTimeout(() => showError(`Новый хост: ${data.newHost}`), 1000)
     }
     if (data.playerCount === 1) {
       setTimeout(() => showGameOver({ winner: state.name, reason: 'won' }), 1500)
     }
+  }
+})
+
+socket.on('player_disconnected', (data) => {
+  if (!data || !data.name) return
+  if (state.inGame) {
+    showError(`⚠ ${data.name} потерял связь (${Math.round(data.graceMs / 1000)} сек)`)
+  }
+})
+
+socket.on('player_reconnected', (data) => {
+  if (!data || !data.name) return
+  if (state.inGame) {
+    showError(`✅ ${data.name} вернулся`)
   }
 })
 
