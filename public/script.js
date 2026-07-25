@@ -264,7 +264,11 @@ function renderGame(gs) {
   const turnPlayer = $('turn-player')
   const turnIndicator = $('turn-indicator')
   if (turnPlayer && gs.players[gs.currentPlayerIndex]) {
-    turnPlayer.textContent = gs.players[gs.currentPlayerIndex].name
+    const currentName = gs.players[gs.currentPlayerIndex].name
+    turnPlayer.textContent = currentName
+    if (gs.pendingDraw && gs.pendingDraw > 0) {
+      turnPlayer.textContent = `${currentName} (+${gs.pendingDraw})`
+    }
   }
   if (turnIndicator) {
     const isMe = gs.currentPlayerIndex === myPlayerIndex
