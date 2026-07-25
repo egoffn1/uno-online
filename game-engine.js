@@ -48,10 +48,12 @@ const gameModes = {
   combo: { label: 'Комбо', ...defaultSettings, comboStacking: true }
 }
 
-function createRoom(mode = 'classic') {
+function createRoom(mode = 'classic', type = 'private') {
   return {
     id: generateRoomId(),
+    type,
     players: [],
+    pendingPlayers: [],
     deck: [],
     discardPile: [],
     currentPlayerIndex: 0,
@@ -66,13 +68,14 @@ function createRoom(mode = 'classic') {
   }
 }
 
-function addPlayer(room, socketId, name) {
+function addPlayer(room, socketId, name, isBot = false) {
   const player = {
     id: socketId,
-    name,
+    name: isBot ? 'Бот' : name,
     hand: [],
-    isHost: room.players.length === 0,
-    calledUno: false
+    isHost: room.players.length === 0 && !isBot,
+    calledUno: false,
+    isBot
   }
   room.players.push(player)
   return player
@@ -164,9 +167,7 @@ function startGame(room) {
 function drawCards(room, count) {
   const drawn = []
   for (let i = 0; i < count; i++) {
-    if (room.deck.length === 0) {
-      recycleDeck(room)
-    }
+    if (room.deck.length === 0) recycleDeck(room)
     if (room.deck.length === 0) break
     drawn.push(room.deck.pop())
   }
@@ -314,6 +315,61 @@ function updateSettings(room, mode, settings) {
   return room.settings
 }
 
+function pickColorForBot(player) {
+  const counts = { red: 0, yellow: 0, green: 0, blue: 0 }
+  for (const c of player.hand) {
+    if (c.color !== 'wild') counts[c.color]++
+  }
+  let best = COLORS[Math.floor(Math.random() * COLORS.length)]
+  let max = 0
+  for (const [color, count] of Object.entries(counts)) {
+    if (count > max) { max = count; best = color }
+  }
+  return best
+}
+
+function getBotMove(room, playerIndex) {
+  const player = room.players[playerIndex]
+  if (!player || !player.isBot) return null
+
+  const hand = player.hand
+
+  if (room.pendingDraw > 0 && room.settings.comboStacking) {
+    const matching = hand.filter(c =>
+      (c.value === 'draw2' && room.currentValue === 'draw2') ||
+      (c.value === 'wild4' && room.currentValue === 'wild4')
+    )
+    if (matching.length > 0) {
+      const chosen = matching[Math.floor(Math.random() * matching.length)]
+      const chosenColor = chosen.color === 'wild' ? pickColorForBot(player) : null
+      const idx = hand.indexOf(chosen)
+      return { action: 'play_card', cardIndex: idx, chosenColor }
+    }
+  }
+
+  if (room.pendingDraw > 0) {
+    return { action: 'draw' }
+  }
+
+  const playable = hand.filter(c => canPlayCard(c, room.currentColor, room.currentValue))
+
+  if (playable.length > 0) {
+    const nonWild = playable.filter(c => c.color !== 'wild')
+    if (nonWild.length > 0) {
+      const chosen = nonWild[Math.floor(Math.random() * nonWild.length)]
+      const idx = hand.indexOf(chosen)
+      return { action: 'play_card', cardIndex: idx, chosenColor: null }
+    } else {
+      const chosen = playable[Math.floor(Math.random() * playable.length)]
+      const idx = hand.indexOf(chosen)
+      const chosenColor = pickColorForBot(player)
+      return { action: 'play_card', cardIndex: idx, chosenColor }
+    }
+  }
+
+  return { action: 'draw' }
+}
+
 module.exports = {
   createRoom,
   addPlayer,
@@ -323,6 +379,7 @@ module.exports = {
   drawAction,
   callUno,
   updateSettings,
+  getBotMove,
   COLORS,
   defaultSettings,
   gameModes

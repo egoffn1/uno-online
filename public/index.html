@@ -13,18 +13,32 @@
     <div class="subtitle">Online</div>
     <div class="lobby-form">
       <input type="text" id="name-input" placeholder="Твоё имя" maxlength="20">
+
       <div class="mode-select lobby-mode">
         <button class="mode-btn active" data-mode="classic">Классический</button>
         <button class="mode-btn" data-mode="combo">Комбо</button>
       </div>
-      <div class="lobby-buttons">
-        <button id="create-btn" class="btn btn-primary">Создать комнату</button>
-        <div class="divider">или</div>
-        <div class="join-row">
-          <input type="text" id="room-input" placeholder="Код комнаты" maxlength="6">
-          <button id="join-btn" class="btn btn-secondary">Войти</button>
-        </div>
+
+      <div class="lobby-create-buttons">
+        <button id="create-solo-btn" class="btn btn-warning">🎮 Игра с ботом</button>
+        <button id="create-public-btn" class="btn btn-secondary">🌍 Открытая комната</button>
+        <button id="create-private-btn" class="btn btn-primary">🔒 Приватная комната</button>
       </div>
+
+      <div class="divider">или</div>
+      <div class="join-row">
+        <input type="text" id="room-input" placeholder="Код комнаты" maxlength="6">
+        <button id="join-btn" class="btn btn-secondary">Войти</button>
+      </div>
+
+      <div id="public-rooms" class="public-rooms hidden">
+        <div class="public-rooms-header">
+          <span class="label">Открытые комнаты</span>
+          <button id="refresh-rooms-btn" class="btn-small btn-refresh">🔄</button>
+        </div>
+        <div id="public-rooms-list" class="public-rooms-list"></div>
+      </div>
+
       <div id="error-msg" class="error hidden"></div>
       <div id="invite-info" class="invite-info hidden"></div>
     </div>
@@ -35,6 +49,7 @@
       <div class="room-info">
         <span class="label">Комната:</span>
         <span id="room-code" class="room-code"></span>
+        <span id="room-type-badge" class="room-type-badge"></span>
         <button id="copy-btn" class="btn-small" title="Копировать код">📋</button>
       </div>
       <button id="leave-btn" class="btn btn-danger btn-small">Выйти</button>
@@ -49,6 +64,11 @@
         </div>
       </div>
       <button id="settings-btn" class="btn btn-small btn-secondary">⚙️ Настройки</button>
+    </div>
+
+    <div id="pending-players" class="pending-players hidden">
+      <div class="label">Запросы на вступление:</div>
+      <div id="pending-list" class="pending-list"></div>
     </div>
 
     <div class="players-list" id="waiting-players"></div>
@@ -156,6 +176,14 @@
         <button id="settings-apply-btn" class="btn btn-primary">Применить</button>
         <button id="settings-cancel-btn" class="btn btn-danger">Отмена</button>
       </div>
+    </div>
+  </div>
+
+  <div id="pending-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Запрос отправлен</h3>
+      <p id="pending-modal-text">Ожидаем подтверждения хоста...</p>
+      <button id="pending-cancel-btn" class="btn btn-danger" style="margin-top:16px;width:100%">Отменить</button>
     </div>
   </div>
 

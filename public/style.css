@@ -284,9 +284,165 @@ input::placeholder { color: var(--text-muted); }
 }
 .divider::before { left: 0; }
 .divider::after { right: 0; }
+.lobby-create-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .join-row { display: flex; gap: 10px; }
 .join-row input { flex: 1; }
 .join-row .btn { white-space: nowrap; }
+
+/* Public rooms list */
+.public-rooms {
+  margin-top: 8px;
+  animation: slideUp 0.4s var(--ease-out);
+}
+.public-rooms-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  margin-bottom: 4px;
+}
+.public-rooms-header .label {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.btn-refresh {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  transition: transform var(--transition-fast);
+}
+.btn-refresh:hover { transform: rotate(180deg); }
+.btn-refresh:active { transform: rotate(360deg); }
+.public-rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.public-room-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.public-room-item:hover {
+  transform: translateX(3px);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  border-color: var(--secondary);
+}
+.public-room-item:active { transform: scale(0.98); }
+.public-room-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.public-room-id {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+.public-room-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.public-room-join-btn {
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
+/* Room type badge */
+.room-type-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.room-type-badge.public {
+  background: rgba(52,152,219,0.15);
+  color: var(--secondary);
+}
+.room-type-badge.private {
+  background: rgba(231,76,60,0.15);
+  color: var(--primary);
+}
+.room-type-badge.solo {
+  background: rgba(241,196,15,0.15);
+  color: var(--accent);
+}
+
+/* Pending players (join requests) */
+.pending-players {
+  width: 100%;
+  max-width: 500px;
+  animation: slideDown 0.3s var(--ease-out);
+}
+.pending-players .label {
+  font-size: 12px;
+  margin-bottom: 4px;
+  padding: 0 4px;
+}
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pending-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(241,196,15,0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(241,196,15,0.2);
+  animation: slideUp 0.3s var(--ease-out) both;
+}
+.pending-item .player-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+.pending-item .player-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pending-actions {
+  display: flex;
+  gap: 6px;
+}
+.pending-actions .btn {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+/* Bot badge */
+.bot-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(241,196,15,0.15);
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-left: 4px;
+}
 
 .error {
   color: var(--danger);

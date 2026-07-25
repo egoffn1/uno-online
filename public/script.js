@@ -5,6 +5,7 @@ let pendingWildCard = null
 let myPlayerIndex = -1
 let isAnimating = false
 let selectedMode = 'classic'
+let isPendingApproval = false
 
 const socket = io({
   reconnection: true,
@@ -66,7 +67,6 @@ function getInitials(name) {
 const colorMap = { red: '#e74c3c', yellow: '#f1c40f', green: '#2ecc71', blue: '#3498db' }
 const colorNamesRu = { red: 'Красный', yellow: 'Жёлтый', green: 'Зелёный', blue: 'Синий' }
 
-// === Connection status ===
 const statusEl = document.createElement('div')
 statusEl.id = 'conn-status'
 statusEl.style.cssText = 'position:fixed;top:8px;right:8px;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;z-index:200;transition:all 0.3s'
@@ -83,6 +83,7 @@ setConnStatus(false, 'Connecting...')
 socket.on('connect', () => {
   setConnStatus(true, 'Connected')
   hideError()
+  refreshPublicRooms()
   if (state.roomId && state.name) {
     socket.emit('rejoin', { roomId: state.roomId, name: state.name }, (res) => {
       if (res && res.state) {
@@ -99,7 +100,6 @@ socket.on('connect', () => {
 socket.on('disconnect', () => setConnStatus(false, 'Reconnecting...'))
 socket.on('connect_error', () => setConnStatus(false, 'Connection error'))
 
-// === Error display ===
 function showError(msg) {
   const el = $('error-msg')
   if (el) { el.textContent = msg; el.classList.remove('hidden') }
@@ -144,23 +144,77 @@ function initModeButtons(container) {
 initModeButtons(document.querySelector('#lobby-view .mode-select'))
 initModeButtons(document.querySelector('#waiting-view .mode-select'))
 
+// === Public rooms ===
+function refreshPublicRooms() {
+  if (!socket.connected) return
+  socket.emit('list_public_rooms', {}, (res) => {
+    if (!res || !res.rooms) return
+    const container = $('public-rooms')
+    const list = $('public-rooms-list')
+    if (!container || !list) return
+    if (res.rooms.length === 0) {
+      container.classList.add('hidden')
+      return
+    }
+    container.classList.remove('hidden')
+    list.innerHTML = res.rooms.map(r => `
+      <div class="public-room-item" data-room-id="${r.id}">
+        <div class="public-room-info">
+          <span class="public-room-id">${r.id}</span>
+          <span class="public-room-meta">${r.hostName} • ${r.mode === 'combo' ? 'Комбо' : 'Классический'} • ${r.playerCount}/10</span>
+        </div>
+        <button class="btn btn-primary btn-small public-room-join-btn">Войти</button>
+      </div>
+    `).join('')
+
+    list.querySelectorAll('.public-room-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const rid = item.dataset.roomId
+        $('room-input').value = rid
+        joinRoom(rid)
+      })
+      const btn = item.querySelector('.public-room-join-btn')
+      if (btn) {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          const rid = item.dataset.roomId
+          $('room-input').value = rid
+          joinRoom(rid)
+        })
+      }
+    })
+  })
+}
+
+$('refresh-rooms-btn').addEventListener('click', refreshPublicRooms)
+
+setInterval(refreshPublicRooms, 10000)
+
 // === Lobby ===
-$('create-btn').addEventListener('click', () => {
+function createRoom(type) {
   const name = $('name-input').value.trim()
   if (!name) { showError('Введи имя!'); return }
   if (!socket.connected) { showError('Нет соединения с сервером'); return }
   hideError(); state.name = name
-  $('create-btn').disabled = true
-  socket.emit('create_room', { name, mode: selectedMode }, (res) => {
-    $('create-btn').disabled = false
+  socket.emit('create_room', { name, mode: selectedMode, type }, (res) => {
     if (res.error) { showError(res.error); return }
-    state.roomId = res.roomId; state.isHost = true; state.inGame = false
-    enterWaiting(res.state)
+    state.roomId = res.roomId
+    state.isHost = !(type === 'solo' && res.solo)
+
+    if (res.solo) {
+      enterGame(res.state, res.hands)
+    } else {
+      enterWaiting(res.state)
+    }
   })
-})
+}
+
+$('create-solo-btn').addEventListener('click', () => createRoom('solo'))
+$('create-public-btn').addEventListener('click', () => createRoom('public'))
+$('create-private-btn').addEventListener('click', () => createRoom('private'))
 
 $('join-btn').addEventListener('click', () => joinRoom($('room-input').value.trim()))
-$('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('create-btn').click() })
+$('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('create-private-btn').click() })
 $('room-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click() })
 
 function joinRoom(roomId) {
@@ -173,10 +227,24 @@ function joinRoom(roomId) {
   socket.emit('join_room', { roomId, name }, (res) => {
     $('join-btn').disabled = false
     if (res.error) { showError(res.error); return }
+    if (res.pending) {
+      isPendingApproval = true
+      $('pending-modal-text').textContent = 'Ожидаем подтверждения хоста...'
+      $('pending-modal').classList.remove('hidden')
+      state.roomId = roomId
+      return
+    }
     state.roomId = roomId; state.isHost = false; state.inGame = false
     enterWaiting(res.state)
   })
 }
+
+$('pending-cancel-btn').addEventListener('click', () => {
+  $('pending-modal').classList.add('hidden')
+  isPendingApproval = false
+  socket.emit('leave')
+  state.roomId = null
+})
 
 const urlParams = new URLSearchParams(window.location.search)
 const inviteRoom = urlParams.get('room')
@@ -234,11 +302,22 @@ function enterWaiting(roomState) {
   $('start-btn').classList.add('hidden')
   updatePlayersList(roomState.players)
 
+  const badge = $('room-type-badge')
+  if (roomState.type === 'public') {
+    badge.textContent = 'Открытая'
+    badge.className = 'room-type-badge public'
+    badge.classList.remove('hidden')
+  } else if (roomState.type === 'private') {
+    badge.textContent = 'Приватная'
+    badge.className = 'room-type-badge private'
+    badge.classList.remove('hidden')
+  } else {
+    badge.classList.add('hidden')
+  }
+
   selectedMode = roomState.mode || 'classic'
   const modeBtns = document.querySelectorAll('#waiting-view .mode-btn')
-  modeBtns.forEach(b => {
-    b.classList.toggle('active', b.dataset.mode === selectedMode)
-  })
+  modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === selectedMode))
 
   const canEdit = state.isHost && roomState.phase === 'waiting'
   document.querySelectorAll('#waiting-view .mode-btn').forEach(b => {
@@ -246,6 +325,46 @@ function enterWaiting(roomState) {
     b.style.opacity = canEdit ? '' : '0.5'
   })
   $('settings-btn').style.display = canEdit ? '' : 'none'
+
+  renderPendingPlayers(roomState.pendingPlayers || [])
+}
+
+function renderPendingPlayers(pending) {
+  const container = $('pending-players')
+  const list = $('pending-list')
+  if (!container || !list) return
+
+  if (!state.isHost || pending.length === 0) {
+    container.classList.add('hidden')
+    return
+  }
+
+  container.classList.remove('hidden')
+  list.innerHTML = pending.map(p => `
+    <div class="pending-item" style="animation-delay:${pending.indexOf(p)*0.1}s">
+      <div class="player-avatar" style="background:${getAvatarColor(p.name)}">${getInitials(p.name)}</div>
+      <span class="player-name">${p.name}</span>
+      <div class="pending-actions">
+        <button class="btn btn-primary btn-small approve-btn" data-id="${p.id}">✅</button>
+        <button class="btn btn-danger btn-small reject-btn" data-id="${p.id}">❌</button>
+      </div>
+    </div>
+  `).join('')
+
+  list.querySelectorAll('.approve-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      socket.emit('approve_join', { playerId: btn.dataset.id }, (res) => {
+        if (res && res.error) showError(res.error)
+      })
+    })
+  })
+  list.querySelectorAll('.reject-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      socket.emit('reject_join', { playerId: btn.dataset.id }, (res) => {
+        if (res && res.error) showError(res.error)
+      })
+    })
+  })
 }
 
 function updatePlayersList(players) {
@@ -254,7 +373,7 @@ function updatePlayersList(players) {
   list.innerHTML = players.map(p => `
     <div class="player-item ${p.isHost ? 'host' : ''}" style="animation-delay:${players.indexOf(p) * 0.08}s">
       <div class="player-avatar" style="background:${getAvatarColor(p.name)}">${getInitials(p.name)}</div>
-      <span class="player-name">${p.name} ${p.isHost ? '<span class="host-badge">ХОСТ</span>' : ''}</span>
+      <span class="player-name">${p.name} ${p.isHost ? '<span class="host-badge">ХОСТ</span>' : ''} ${p.isBot ? '<span class="bot-badge">БОТ</span>' : ''}</span>
     </div>
   `).join('')
   const pc = $('players-count')
@@ -297,8 +416,11 @@ $('settings-btn').addEventListener('click', () => {
 function leaveRoom() {
   socket.emit('leave')
   state = { roomId: null, name: state.name, isHost: false, hand: [], inGame: false }
-  $('create-btn').disabled = false; $('join-btn').disabled = false
+  isPendingApproval = false
+  $('create-btn') && ($('create-btn').disabled = false)
+  $('join-btn').disabled = false
   showView('lobby-view')
+  refreshPublicRooms()
 }
 
 $('leave-btn').addEventListener('click', leaveRoom)
@@ -311,7 +433,7 @@ $('back-to-lobby-btn').addEventListener('click', () => {
 // === Game ===
 function enterGame(gameState, hands) {
   state.inGame = true
-  state.hand = hands[socket.id] || []
+  state.hand = hands && hands[socket.id] ? hands[socket.id] : []
   myPlayerIndex = -1
   gameState.players.forEach((p, i) => { if (p.id === socket.id) myPlayerIndex = i })
   showView('game-view')
@@ -380,7 +502,7 @@ function renderGame(gs) {
       return `
         <div class="opponent-card ${isActive ? 'active-turn' : ''}">
           <div class="opponent-avatar" style="background:${getAvatarColor(p.name)}">${getInitials(p.name)}</div>
-          <div class="opponent-name">${p.name}</div>
+          <div class="opponent-name">${p.name} ${p.isBot ? '<span class="bot-badge">БОТ</span>' : ''}</div>
           <div class="opponent-cards">🃏<span>×${p.cardsCount}</span></div>
           ${isActive ? '<div class="opponent-turn-arrow">◀ ХОДИТ</div>' : ''}
         </div>`
@@ -413,11 +535,9 @@ function renderDiscardPile(gs) {
   const discard = $('discard-pile')
   if (!discard) return
   if (!gs.discardTop) { discard.innerHTML = ''; return }
-
   discard.innerHTML = ''
   const chosenColor = gs.discardTop.color === 'wild' && gs.currentColor ? gs.currentColor : null
-  const cardEl = createCardEl(gs.discardTop, chosenColor)
-  discard.appendChild(cardEl)
+  discard.appendChild(createCardEl(gs.discardTop, chosenColor))
 }
 
 function triggerAutoDraw(count) {
@@ -446,7 +566,6 @@ function triggerAutoDraw(count) {
       fly.className = 'draw-animation-card'
       fly.style.setProperty('--target-x', `${toX - fromX + (Math.random() - 0.5) * 60}px`)
       fly.style.setProperty('--target-y', `${toY - fromY - 20}px`)
-      fly.style.animationDuration = '0.5s'
       fly.style.left = `${fromX - 35}px`
       fly.style.top = `${fromY - 52}px`
       fly.style.transform = `rotate(${-20 + Math.random() * 40}deg)`
@@ -522,10 +641,7 @@ function onCardClick(index) {
     pendingWildCard = index
     const modal = $('color-picker-modal')
     const choices = modal ? modal.querySelectorAll('.color-choice') : []
-    choices.forEach(el => {
-      el.style.boxShadow = 'none'
-      el.style.transform = 'scale(1)'
-    })
+    choices.forEach(el => { el.style.boxShadow = 'none'; el.style.transform = 'scale(1)' })
     if (modal) modal.classList.remove('hidden')
     return
   }
@@ -619,6 +735,7 @@ socket.on('room_update', (gs) => {
   window._lastGameState = gs
   if ($('waiting-view') && $('waiting-view').classList.contains('active')) {
     updatePlayersList(gs.players)
+    renderPendingPlayers(gs.pendingPlayers || [])
   }
   if ($('game-view') && $('game-view').classList.contains('active') && !isAnimating) {
     renderGame(gs)
@@ -647,7 +764,7 @@ socket.on('game_over', (data) => {
 socket.on('player_left', (data) => {
   if (!data) return
   if (state.inGame) {
-    const msg = `Игрок ${data.name || '—'} отключился`
+    const msg = data.name ? `Игрок ${data.name} отключился` : 'Игрок отключился'
     showError(msg)
     if (data.newHost) {
       setTimeout(() => showError(`Новый хост: ${data.newHost}`), 1000)
@@ -663,9 +780,31 @@ socket.on('settings_updated', (data) => {
   window._lastSettings = data.settings
   if ($('waiting-view') && $('waiting-view').classList.contains('active')) {
     const modeBtns = document.querySelectorAll('#waiting-view .mode-btn')
-    modeBtns.forEach(b => {
-      b.classList.toggle('active', b.dataset.mode === data.mode)
-    })
+    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === data.mode))
     selectedMode = data.mode
   }
+})
+
+socket.on('join_request', (data) => {
+  if (!data) return
+  if ($('waiting-view') && $('waiting-view').classList.contains('active')) {
+    const gs = window._lastGameState
+    if (gs) renderPendingPlayers(gs.pendingPlayers || [])
+  }
+})
+
+socket.on('join_approved', (data) => {
+  $('pending-modal').classList.add('hidden')
+  isPendingApproval = false
+  state.isHost = false
+  if (data && data.state) {
+    enterWaiting(data.state)
+  }
+})
+
+socket.on('join_rejected', (data) => {
+  $('pending-modal').classList.add('hidden')
+  isPendingApproval = false
+  state.roomId = null
+  showError(data && data.reason ? data.reason : 'Хост отклонил запрос')
 })
