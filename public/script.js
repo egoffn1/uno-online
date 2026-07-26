@@ -539,7 +539,7 @@ function scheduleDealAnimation(gs) {
   setTimeout(() => renderGame(gs), state.hand.length * 60 + 600)
 }
 
-function renderGame(gs) {
+function renderGame(gs, skipTurnActions) {
   window._lastGameState = gs
 
   const dir = $('game-direction')
@@ -602,7 +602,7 @@ function renderGame(gs) {
 
   renderHand()
 
-  if (gs.currentPlayerIndex === myPlayerIndex && state.inGame && !isAnimating) {
+  if (!skipTurnActions && gs.currentPlayerIndex === myPlayerIndex && state.inGame && !isAnimating) {
     if (gs.pendingDraw && gs.pendingDraw > 0) {
       if (gs.settings && gs.settings.comboStacking) {
         showTurnNotif(`У тебя +${gs.pendingDraw}! Сыграй +2/+4 или возьми карты`)
@@ -631,16 +631,22 @@ function triggerAutoDraw(count) {
 
   showTurnNotif(`Берёшь ${count} карт${count > 1 ? 'ы' : 'у'}!`)
 
+  const safetyTimer = setTimeout(() => {
+    if (drawPile) drawPile.classList.remove('pulse')
+    isAnimating = false
+    showError('Таймаут, попробуй ещё раз')
+    if (window._lastGameState) renderGame(window._lastGameState)
+  }, 10000)
+
   socket.emit('draw_card', (res) => {
+    clearTimeout(safetyTimer)
     if (drawPile) drawPile.classList.remove('pulse')
     isAnimating = false
     if (res && res.error) {
       showError(res.error)
       showTurnNotif('Твой ход!')
-      if (window._lastGameState) renderGame(window._lastGameState)
-    } else {
-      if (window._lastGameState) renderGame(window._lastGameState)
     }
+    if (window._lastGameState) renderGame(window._lastGameState, true)
   })
 }
 
