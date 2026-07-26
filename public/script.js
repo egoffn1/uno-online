@@ -510,6 +510,7 @@ $('back-to-lobby-btn').addEventListener('click', () => {
 
 // === Game ===
 function enterGame(gameState, hands) {
+  isAnimating = false
   navigateToRoom(gameState.id)
   state.inGame = true
   state.hand = hands && hands[socket.id] ? hands[socket.id] : []
@@ -603,7 +604,11 @@ function renderGame(gs) {
 
   if (gs.currentPlayerIndex === myPlayerIndex && state.inGame && !isAnimating) {
     if (gs.pendingDraw && gs.pendingDraw > 0) {
-      triggerAutoDraw(gs.pendingDraw)
+      if (gs.settings && gs.settings.comboStacking) {
+        showTurnNotif(`У тебя +${gs.pendingDraw}! Сыграй +2/+4 или возьми карты`)
+      } else {
+        triggerAutoDraw(gs.pendingDraw)
+      }
     } else {
       showTurnNotif('Твой ход!')
     }
@@ -653,8 +658,17 @@ function triggerAutoDraw(count) {
     }, i * 150)
   }
 
+  const safetyTimer = setTimeout(() => {
+    overlay.remove()
+    if (drawPile) drawPile.classList.remove('pulse')
+    isAnimating = false
+    showError('Ошибка взятия карт, попробуй ещё раз')
+    if (window._lastGameState) renderGame(window._lastGameState)
+  }, 10000)
+
   setTimeout(() => {
     socket.emit('draw_card', () => {
+      clearTimeout(safetyTimer)
       overlay.remove()
       if (drawPile) drawPile.classList.remove('pulse')
       isAnimating = false
