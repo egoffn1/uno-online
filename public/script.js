@@ -631,62 +631,17 @@ function triggerAutoDraw(count) {
 
   showTurnNotif(`Берёшь ${count} карт${count > 1 ? 'ы' : 'у'}!`)
 
-  const handContainer = $('player-hand')
-  const drawRect = drawPile ? drawPile.getBoundingClientRect() : { left: 0, top: 0 }
-  const handRect = handContainer ? handContainer.getBoundingClientRect() : { left: 0, top: 0 }
-
-  const fromX = drawRect.left + drawRect.width / 2
-  const fromY = drawRect.top + drawRect.height / 2
-  const toX = handRect.left + handRect.width / 2
-  const toY = handRect.top
-
-  const overlay = document.createElement('div')
-  overlay.className = 'draw-animation-overlay'
-  document.body.appendChild(overlay)
-
-  for (let i = 0; i < count; i++) {
-    setTimeout(() => {
-      const fly = document.createElement('div')
-      fly.className = 'draw-animation-card'
-      fly.style.setProperty('--target-x', `${toX - fromX + (Math.random() - 0.5) * 60}px`)
-      fly.style.setProperty('--target-y', `${toY - fromY - 20}px`)
-      fly.style.left = `${fromX - 35}px`
-      fly.style.top = `${fromY - 52}px`
-      fly.style.transform = `rotate(${-20 + Math.random() * 40}deg)`
-      fly.textContent = 'UNO'
-      overlay.appendChild(fly)
-    }, i * 150)
-  }
-
-  const safetyTimer = setTimeout(() => {
-    overlay.remove()
+  socket.emit('draw_card', (res) => {
     if (drawPile) drawPile.classList.remove('pulse')
     isAnimating = false
-    showError('Таймаут, попробуй ещё раз')
-    if (window._lastGameState) renderGame(window._lastGameState)
-  }, 15000)
-
-  setTimeout(() => {
-    const gs = window._lastGameState
-    if (!gs || gs.currentPlayerIndex !== myPlayerIndex || !state.inGame) {
-      clearTimeout(safetyTimer)
-      overlay.remove()
-      if (drawPile) drawPile.classList.remove('pulse')
-      isAnimating = false
-      if (gs) renderGame(gs)
-      return
-    }
-    socket.emit('draw_card', (res) => {
-      clearTimeout(safetyTimer)
-      overlay.remove()
-      if (drawPile) drawPile.classList.remove('pulse')
-      isAnimating = false
-      if (res && res.error) {
-        showError(res.error)
-      }
+    if (res && res.error) {
+      showError(res.error)
+      showTurnNotif('Твой ход!')
       if (window._lastGameState) renderGame(window._lastGameState)
-    })
-  }, (count - 1) * 150 + 600)
+    } else {
+      if (window._lastGameState) renderGame(window._lastGameState)
+    }
+  })
 }
 
 function renderHand() {
