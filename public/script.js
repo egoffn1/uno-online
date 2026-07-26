@@ -662,16 +662,28 @@ function triggerAutoDraw(count) {
     overlay.remove()
     if (drawPile) drawPile.classList.remove('pulse')
     isAnimating = false
-    showError('Ошибка взятия карт, попробуй ещё раз')
+    showError('Таймаут, попробуй ещё раз')
     if (window._lastGameState) renderGame(window._lastGameState)
-  }, 10000)
+  }, 15000)
 
   setTimeout(() => {
-    socket.emit('draw_card', () => {
+    const gs = window._lastGameState
+    if (!gs || gs.currentPlayerIndex !== myPlayerIndex || !state.inGame) {
       clearTimeout(safetyTimer)
       overlay.remove()
       if (drawPile) drawPile.classList.remove('pulse')
       isAnimating = false
+      if (gs) renderGame(gs)
+      return
+    }
+    socket.emit('draw_card', (res) => {
+      clearTimeout(safetyTimer)
+      overlay.remove()
+      if (drawPile) drawPile.classList.remove('pulse')
+      isAnimating = false
+      if (res && res.error) {
+        showError(res.error)
+      }
       if (window._lastGameState) renderGame(window._lastGameState)
     })
   }, (count - 1) * 150 + 600)
